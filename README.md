@@ -193,7 +193,16 @@ build-logic/    Gradle 约定插件
 
 ## 7. 构建
 
-**CI**：push 到 `main` 自动触发 `.github/workflows/build.yml`（GitHub Actions），产物为 `app-arm64-v8a-release.apk`；`workflow_dispatch` 也可手动触发。
+**CI 只在两种情况下跑**（`.github/workflows/build.yml`）：
+
+| 触发 | 行为 |
+|---|---|
+| **推版本 tag**（`v*`，如 `v2.6.0`） | release 构建：上传 artifact + **自动发 GitHub Release**（APK 挂在 Release 上，有固定下载链接） |
+| **手动 dispatch**（Actions 页 Run workflow，或 API） | 只出 artifact；不发 Release、**不占版本号**（验证能否编译用这个） |
+
+push 到 `main` **不再**触发构建 —— 改文档、改注释不浪费 CI 时间。
+
+**发布流程**：改代码 → bump `versionCode` / `versionName` → 提交推 `main` → 打 tag `vX.Y.Z` 推上去 → CI 出包 + 发 Release。
 
 **本地**：
 

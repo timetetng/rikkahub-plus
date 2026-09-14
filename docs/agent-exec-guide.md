@@ -217,7 +217,11 @@ echo $! > /data/local/tmp/jobs/<名字>.pid
 1. 一个 fork（GitHub 账号）
 2. 仓库里**自带 `app/app.key`**（`storePassword=keyPassword=android`）→ 构建出的 APK 与原包**同签名**，可直接覆盖安装
 3. 打开 Actions：`PUT /repos/<你>/<仓库>/actions/permissions {"enabled":true,"allowed_actions":"all"}`
-4. 推一个 commit 到默认分支即触发构建（产物 `app/build/outputs/apk/release/*arm64-v8a*.apk`）
+4. **触发构建**（CI 只在两种情况下跑）：
+   - **推版本 tag**：`git tag vX.Y.Z && git push origin vX.Y.Z` → release 构建 + **自动发 GitHub Release**（APK 挂上去，有固定下载链接）
+   - **手动**：Actions 页 → 选 `Build APK` → Run workflow（只出 artifact，不占版本号，验证能否编译用这个）
+   - push 到 `main` 本身**不**触发构建
+   - 产物路径 `app/build/outputs/apk/release/*arm64-v8a*.apk`
 
 **本地构建**（有 Android SDK + JDK 21）：
 ```bash

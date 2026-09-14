@@ -1,17 +1,18 @@
 name: Build APK
 
 on:
+  # 只认版本 tag：v2.6.0 / v2.6.1 …（push 到 main 不再自动构建）
   push:
-    branches: [ main ]
-    paths-ignore:            # 纯文档改动不值得跑 16 分钟构建
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
+    tags:
+      - 'v*'
+  # 手动：验证能否编译 / 临时出包，不占版本号
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # 按 tag 发 Release 需要
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,3 +56,17 @@ jobs:
         with:
           name: rikkahub-plus-fresh
           path: app/build/outputs/apk/release/*arm64-v8a*.apk
+
+      - name: Rename APK for release (tag only)
+        if: success() && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/*arm64-v8a*.apk "dist/rikkahub-${GITHUB_REF_NAME}-arm64-v8a.apk"
+          ls -la dist
+
+      - name: Publish release (tag only)
+        if: success() && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          generate_release_notes: true
