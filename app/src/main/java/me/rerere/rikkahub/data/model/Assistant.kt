@@ -52,8 +52,6 @@ data class Assistant(
         LocalToolOption.AskUser,
         LocalToolOption.Clipboard,
     ),
-    // 命理工具总开关（mingli + mingli_guide），默认开启保持存量行为
-    val enableMingliTools: Boolean = true,
     // ── 容器桥接工具（方案 A：配置存助手 JSON，不动 DB）──
     val containerMode: String = "arch",     // arch | root | termux
     val containerName: String = "arch",     // droidspaces 容器名

@@ -18,7 +18,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 // 更新源已从官方服务器切到本仓库：发新版时同步更新仓库根目录 update.json 并发布 GitHub Release
-private const val API_URL = "https://raw.githubusercontent.com/timetetng/rikkahub-plus/mingli2/update.json"
+private const val API_URL = "https://raw.githubusercontent.com/timetetng/rikkahub-plus/main/update.json"
 
 class UpdateChecker(private val client: OkHttpClient) {
     private val json = Json { ignoreUnknownKeys = true }

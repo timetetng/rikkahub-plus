@@ -13,9 +13,7 @@ local.properties
 .history
 .kotlin
 __pycache__/
-tmp_stellium/
 build.log
-stelli/
 # 本地调研/验证报告，不推远程
 *research_*.json
 *验证报告*

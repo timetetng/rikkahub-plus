@@ -1,204 +1,192 @@
-# RikkaHub Plus — 酒馆增强 · 命理排盘
+# Rikka+ · RikkaHub Plus（自维护分支）
 
-[**简体中文**](README.md) | [**English**](README_EN.md)
+> 跑在 Android 上的原生 LLM 聊天客户端（Kotlin + Jetpack Compose + Material You）。
+> **自 2026-09 起，本仓库（`timetetng/rikkahub-plus` 分支 `main`）完全由我们自己维护。**
 
-> 基于 [RikkaHub](https://github.com/rikkahub/rikkahub) 的深度定制分支：一个原生 Android LLM 聊天客户端。
-> 上游全部功能原样保留，在此之上新增 **SillyTavern 酒馆兼容层** 与 **十二套命理排盘体系**。
-> 逐文件差异与上游合并工作流见 [DIVERGENCE.md](DIVERGENCE.md)。
-
----
-
-## 📌 它是什么
-
-一个跑在手机上的 AI 聊天客户端（Kotlin + Jetpack Compose + Material You）：
-
-- **多提供商**：OpenAI / Claude / Gemini / DeepSeek 等任意 OpenAI、Anthropic、Google 兼容 API
-- **酒馆兼容**：SillyTavern 角色卡 / 世界书深度兼容，字段无损导入导出，官方注入结构
-- **命理系统**：十二套确定性排盘引擎（八字 / 紫微 / 塔罗 / 西洋占星 / 吠陀 / 奇门 / 六爻…），AI 按权威模板逐条解读
-- **可编程提示词**：宏引擎 2.0、21 个斜杠命令、群聊、技能自动触发、Python / JS 双引擎桥接
+| | |
+|---|---|
+| 包名 / 应用名 | `me.rerere.rikkahub` / **Rikka+** |
+| 基座 | [rikkahub/rikkahub](https://github.com/rikkahub/rikkahub) `2.4.6` |
+| 中间层 | [heikeyangle-code/rikkahub-plus](https://github.com/heikeyangle-code/rikkahub-plus) 的「酒馆增强层」 |
+| 本分支 | `main`（默认分支，唯一开发主线）；`master` 仅作原件备份 |
+| 许可 | [AGPL-3.0](LICENSE) |
 
 ---
 
-## ⚔️ 和上游比，独特在哪
+## 1. 本分支做了什么（相对中间层）
 
-| | 上游 RikkaHub | **RikkaHub Plus** |
+| 改动 | 说明 |
+|---|---|
+| **移除命理 / 排盘** | 工具层（`mingli` / `mingli_guide` 工具、14 份强制解读模板、系统提示里的排盘工作流）与**引擎层**（13 个 QuickJS 排盘引擎、约 20 个 Python 命理包、`offline_pkgs/` 全部轮子）一并删除；对应的 19 个 CI 步骤、Chaquopy 依赖、离线包缓存全部清掉 → 构建时间与 APK 体积同步下降 |
+| **移除硬编码提示词注入** | 中间层塞进系统提示的 `<tool_selection>` / `<work_ethic>` / `<mingli_workflow>` 三段全部删除，提示词回到「由助手卡片（system prompt）自己决定」 |
+| **永久停用更新检查** | 不再请求 `update.json`，抽屉里不会弹更新卡；版本策略改为「自己构建、自己安装」 |
+| **新增 droidspaces 容器桥接** | 7 个 `container_*` 工具，让 AI 能在本机 droidspaces 容器里执行命令、读写文件、跑后台长任务（见 §4） |
+| **仓库卫生** | 删除误入仓库的构建日志 zip、英文 README、死代码（`enableMingliTools`）、作者遗留的补丁脚本目录 `ci/` |
+
+---
+
+## 2. 功能总览
+
+### 2.1 模型与对话
+
+- **多提供商**：OpenAI / Anthropic(Claude) / Google(Gemini) 协议，以及任意兼容 API 的自定义 provider（自定义 base URL、headers、body、模型列表）
+- 流式输出、思考链（reasoning）展示与推理等级控制、多模型收藏与快速切换
+- 对话分支、重新生成、消息编辑 / 删除 / 翻译、预设消息
+- **全文搜索**：会话与消息全文检索（jieba 中文分词，`app/src/main/assets/simple_dict/`）
+- 多模态输入：图片、文件附件；图片生成调用
+
+### 2.2 酒馆（SillyTavern）兼容层
+
+- **角色卡**：V2/V3 JSON（PNG 内嵌）导入 → 20+ 字段结构化保留（示例对话、备选开场白、作者备注、历史后指令、深度提示、内嵌世界书、extensions 原样），按官方 Chat Completion 注入结构组装；支持 PNG / JSON **无损导出**与 22 字段可视化编辑页
+- **世界书（Lorebook）**：逐条对齐官方 `world-info.js` 语义——四档关键词逻辑、整词 / 正则 / 大小写、条目级扫描深度、常驻、跨书分组与权重、概率、粘性 / 冷却、延迟激活、递归控制与层级开放、token 预算与豁免、`match_*` 字段——完整 `checkWorldInfo` 扫描状态机
+- **宏引擎 2.0**：变量（`{{getvar::}}`、`/setvar` 等）、条件（`{{if}} / {{else}}`、比较与逻辑运算）、随机（`{{pick::A|B}}`、`{{roll::1d20}}`）、对话感知（`{{lastUserMessage}}`、`{{idleDuration}}`…）
+- **斜杠命令**：21 个内置命令（`/impersonate` `/continue` `/sysgen` `/reroll-pick` `/char-update` `/persona` …），输入框直接执行，`/help` 查看全部
+- **人设（Persona）**：五档注入位置（IN_PROMPT / TOP / BOTTOM / AT_DEPTH / NONE）、按角色绑定、独立 SYSTEM 消息
+- **导演备注（Author's Note）**：官方间隔语义、注入深度与角色
+- **群聊**：多角色同场，独立提示词 / 人设 / 模型，四种选人策略 + 自动接话
+
+### 2.3 助手与提示词工程
+
+- 助手（Assistant）卡片：system prompt、上下文模板（ADF 风格）、正则输入 / 输出替换、预设与快捷消息、世界书 / 模式注入绑定
+- **记忆系统**：全局或按助手隔离的长期记忆 + 自动记忆提取（间隔可配）
+- 提示词注入、作者注、时间提醒、技能自动触发等 transformer 管线
+
+### 2.4 技能系统（Skills）
+
+- 技能 = 目录 + `SKILL.md`（frontmatter + 正文 + 附属文件），按需加载进上下文
+- **自动触发**：命中关键词时自动注入，不必等模型主动调用
+- **外部目录** `/Rikkahub/skills`：文件管理器直接放进去就能用
+- **GitHub 一键安装 / 批量下载 / 更新检测**（记录安装源与目录哈希）、内置技能注册表
+
+### 2.5 AI 工具集
+
+模型可调用的本地能力（在助手设置里逐项开关）：
+
+| 工具 | 说明 |
+|---|---|
+| `file_read/write/list/search/copy/move/delete` | 沙箱内文件操作 |
+| `execute_command` | App 沙箱 shell |
+| `execute_python` | Chaquopy 3.12 常驻解释器 |
+| `eval_javascript` | QuickJS（ES2020，持久上下文，`load` / `eval` / `reset`） |
+| `calculator` / `database_query` | 700+ 函数计算器；SQLite 只读查询 |
+| `task_*` / `memory_*` / `use_skill` | 任务待办 / 长期记忆 / 技能加载 |
+| `get_time` `clipboard` `text_to_speech` `ask_user` `present_file` `screen_time` `calendar_*` | 设备能力 |
+| `web_fetch` | 任意 URL 的 HTTP 请求（GET/POST/PUT/PATCH/DELETE） |
+| `search_*` | 18 种搜索后端：Brave / Bing / Exa / Tavily / SearXNG / Serper / Jina / Firecrawl / Perplexity / 智谱 / Bocha / Metaso / LinkUp / Ollama / Grok / Tinyfish / RikkaHub / 自定义 JS |
+| `workspace_*` | 工作区（proot 沙箱）读写与 shell |
+| `conversation_*` / `worker_*` / `teammate_*` / `send_message` | 跨会话与多智能体协作 |
+| **`container_*`（本分支新增）** | **droidspaces 容器桥接，见 §4** |
+| MCP | 接入任意 MCP 服务器，工具自动并入工具表 |
+
+### 2.6 文档与多媒体
+
+- 文档解析：**PDF / DOCX / PPTX / EPUB**
+- 图片输入、图片生成、代码高亮（`highlight` 模块）
+- 聊天导出（Markdown / JSON / 图片等）
+
+### 2.7 语音
+
+- **ASR**：DashScope / StepFun / OpenAI Realtime / MiMo / 火山引擎
+- **TTS**：多 provider，可被 AI 通过 `text_to_speech` 工具调用
+
+### 2.8 数据、备份与同步
+
+- 备份 / 恢复：本地文件、**S3**、**WebDAV**，支持定时提醒
+- 导入 / 导出助手与设置
+
+### 2.9 网页端与开发工具
+
+- `web/` + `web-ui/`：内置 Web 服务端与配套前端（React Router + pnpm）
+- `trace-cli/`、`locale-tui/`、`search/`、`speech/`、`document/`、`ai/`、`workspace/` 等独立模块
+
+---
+
+## 3. 目录结构
+
+```
+app/            Android 主模块：UI / ViewModel / 工具 / 数据层
+ai/             AI SDK 抽象（OpenAI / Anthropic / Google 协议）
+search/         搜索后端实现
+speech/         ASR / TTS
+document/       PDF / DOCX / PPTX / EPUB 解析
+workspace/      proot 工作区沙箱
+web/ web-ui/    内置 Web 服务端与前端
+highlight/      material3/  common/   基础与主题
+build-logic/    Gradle 约定插件
+```
+
+---
+
+## 4. 容器桥接（`container_*`）— 本分支新增
+
+让 AI 直接在本机的 **droidspaces 容器**（或真机全局 / Termux 环境）里干活，不必手写 `su -c ... <<'EOF'` 那套转义。
+
+| 工具 | 参数 | 行为 |
 |---|---|---|
-| 🎴 角色卡 | 解析 6 个字段，无导出 | **22 字段无损**：官方注入结构、PNG / JSON 导出、可视化编辑 |
-| 📚 世界书 | 基础关键词匹配 | **官方全套语义**：四档关键词、跨书分组、递归扫描、粘性 / 冷却、token 预算 |
-| 🧩 宏 | 简单占位符 | **宏引擎 2.0**：变量、条件、随机、对话感知，提示词可编程 |
-| ⌨️ 斜杠命令 | 无 | **21 个内置命令**：`/impersonate` `/continue` `/sysgen` `/reroll-pick` … |
-| 👥 人设 / 导演备注 / 群聊 | 无 | **三个全新系统**，全部对齐酒馆官方语义 |
-| 🔮 命理 | 无 | **十二套排盘体系** + 14 份强制解读模板，Python / JS 双引擎交叉验证 |
-| 🚀 技能 | 模型手动调用才加载 | **自动触发**、公共目录、GitHub 一键安装 / 批量下载 / 更新检测 |
-| ⚡ 生成 | 切后台易中断 | **前台服务保活**，后台生成不打断 |
+| `container_exec` | `command`, `cwd?`, `timeout_sec?` | 容器内执行命令，返回 `exit_code / stdout / stderr`；超时（默认取助手「单工具执行超时」，上限 600s）**会 kill 进程** |
+| `container_read_file` | `path`, `offset?`, `limit?` | 逐行读文本；无 `offset/limit` 且文件 > 2 MB 时拒绝 |
+| `container_write_file` | `path`, `content` | base64 管道写入（内容含引号 / 换行 / emoji 均安全），自动建父目录，上限 2 MB |
+| `container_edit_file` | `path`, `old_string`, `new_string`, `replace_all?` | 精确字符串替换；`old_string` 不存在**直接报错**（不静默写入）；多处匹配需显式 `replace_all` |
+| `container_list` | — | 当前容器列表 + 后台任务 + 容器内 `docker ps` |
+| `container_bg` | `name`, `command` | 交给容器 systemd 后台跑（长任务唯一正解），**立即返回** |
+| `container_log` | `name`, `lines?` | 取后台任务的状态与日志 |
 
-一句话：**上游是基础聊天客户端，这是给 AI 角色扮演和命理爱好者准备的完整工具箱。**
+**实现方式**：命令经 `su -c /data/local/exec-tool.sh <mode> <容器名>` 送进容器，命令体写进执行器进程的 **stdin**（执行器内部 `CMD=$(cat)`）→ 天然 heredoc，引号 / 反引号 / `$()` / 内嵌 heredoc 一律原样，不存在二次转义。全部工具**免审批**。
 
----
+**助手设置里可配**：
 
-## 🍺 酒馆系统（本分支的主战场）
-
-> 规模对照（逐文件核对）：角色卡导入 `AssistantImporter.kt` 上游 183 行 → 本地 V2/V3 全量重写；世界书引擎 `PromptInjectionTransformer.kt` 上游 269 行 → 本地 860 行；世界书 / 注入编辑页 `PromptPage.kt` 本地 2485 行；角色卡编辑页 `TavernCharacterCard.kt` 本地 1942 行；导出器 `CardExporter.kt` 本地 313 行。
-
-### 1. 角色卡：导入 → 结构化 → 注入 → 导出 → 编辑
-
-**上游**：JSON（V2/V3）与 PNG 可导入，但只解析 6 个字段（name / first_mes / system_prompt / description / personality / scenario），拼成一段 "You are roleplaying as X + ## Description + ## Personality + ## Scenario" 的系统提示字符串；其余字段全部丢弃；**没有导出，没有编辑页**。
-
-**本分支**：
-
-- **字段从 6 个扩到 20+ 个，全部结构化保留**：示例对话（mes_example）、备选开场白（alternate_greetings）、作者备注（creator_notes / creator_notes_multilingual）、历史后指令（PHI）、角色版本、标签、昵称、素材（assets）、仅群聊开场白（group_only_greetings）、创建 / 修改时间、`character_book`（内嵌世界书）、`extensions`（深度提示，含深度与角色参数）。上游会丢掉的，这里一个不丢——extensions 原始结构也保留，导入再导出无损往返。
-- **官方 Chat Completion 注入结构**：主提示、角色卡字段独立消息、示例消息按 `<START>` 分块解析成真正的 user/assistant 对话、PHI 放历史末尾、深度提示按配置的深度 / 角色注入。
-- **无损导出（新增）**：PNG / JSON 导出（`CardExporter.kt`），字段名对齐官方规范（`insertion_order`、`extensions.*`），导入再导出不丢东西。
-- **角色卡详情编辑页（新增）**：22 个字段可视化编辑 + 内嵌世界书管理 + 导出按钮，一张卡全部搞定。
-
-### 2. 世界书（Lorebook）
-
-**上游**：5 字段数据模型（id / name / description / enabled / entries）+ 关键词包含匹配 → 注入内容，支持扫描深度、常驻条目、优先级、注入位置。
-
-**本分支**——逐条对齐酒馆官方 world-info.js 语义，条目字段从上游的 6 个扩到 30+ 个：
-
-| 能力 | 本地字段 | 官方对应 |
+| 配置项 | 默认 | 说明 |
 |---|---|---|
-| 主 / 副关键词四档逻辑 | `selective` + `selectiveLogic` | `selective` + `selective_logic`（and_any / and_all / not_any / not_all） |
-| 整词 / 正则 / 大小写 | `matchWholeWords` / `useRegex` / `caseSensitive` | `match_whole_words` / `key_regex` / `key_case_sensitive` |
-| 条目级扫描深度 | `scanDepth`（覆盖全局深度） | `scan_depth` |
-| 常驻激活 | `constantActive` | `constant` |
-| 跨书分组 | `group` / `groupWeight` / `groupOverride` | `group`（逗号分隔）/ `group_weight` / `group_override` |
-| 触发概率 | `probability` / `useProbability` | `probability` / `use_probability` |
-| 粘性 / 冷却 | `sticky` / `cooldown` | `sticky` / `cooldown` |
-| 延迟激活 | `delay` | `extensions.delay` |
-| 递归控制 | `excludeRecursion` / `preventRecursion` | `extensions.exclude_recursion` / `prevent_recursion` |
-| 延迟到递归 | `delayUntilRecursion`（true 或数字层级） | `extensions.delay_until_recursion` |
-| 预算豁免 | `ignoreBudget` | `extensions.ignore_budget` |
-| 匹配角色卡字段 | `match_*` ×6（人设 / 描述 / 性格 / 深度提示 / 场景 / 作者备注） | `extensions.match_*` |
-| 展示排序 / 生成过滤 | `displayIndex` / `displayPosition` / `triggers` | `display_index` / `display_position` / `triggers` |
+| 容器模式 | `arch` | `arch` = droidspaces 容器；`root` = 真机全局命名空间；`termux` = ZeroTermux |
+| 容器名 | `arch` | 配合 `arch` 模式使用 |
+| 默认工作目录 | `/root` | 容器内绝对路径；单次调用可用 `cwd` 覆盖 |
 
-**扫描引擎**（`PromptInjectionTransformer.kt`，269 → 860 行）：
+**边界与注意**：
 
-- **官方 checkWorldInfo 状态机**：INITIAL → RECURSION / MIN_ACTIVATIONS / 层级开放循环，含预算、溢出、粘性、冷却的完整生命周期
-- **跨世界书分组选胜**：同组只激活一条——粘性优先 → 关键词评分（use_group_scoring）→ group_override → 加权随机
-- **递归扫描**：已激活条目的内容进递归缓冲继续扫，缓冲逐层累积；exclude / prevent 控制、`delay_until_recursion` 数字层级逐级开放
-- **token 预算**：budget = 全局预算百分比 × 上下文 token，溢出即停（可弹提醒），`ignore_budget` 条目豁免
-- **官方序列化兼容**：selective_logic 等字段用官方枚举名（and_any…）序列化，与酒馆导入导出互通
-
-**编辑页**（`PromptPage.kt`，2485 行）：
-
-- **全局设置面板**：扫描深度、token 预算（+ 绝对上限）、最少激活数（+ 最大深度）、递归扫描（+ 最大递归轮数）、插入策略（角色卡优先 / 全局优先 / 均匀）、溢出提醒、组评分——全部对齐官方设置项
-- **条目编辑器**：关键词（主 / 副、四档逻辑、正则、整词）、注入位置 / 深度 / 角色、概率、粘性 / 冷却 / 延迟、分组与权重、递归控制、match_*、预算豁免
-- **拖拽排序**（reorderable）+ 外置世界书与内嵌世界书双向同步
-
-### 3. 宏引擎 2.0
-
-**上游**：`PlaceholderTransformer.kt`（162 行）——一张 `{{char}}` / `{{user}}` / `{{time}}` 键值表，字符串替换，仅 6 个占位符。
-
-**本分支**（`MacroEngine.kt`，965 行）——提示词变成程序：
-
-- **变量系统**：`/setvar` `/getvar` `/incvar` … 管理对话变量，宏里用 `{{getvar::key}}` 或 `.key` 简写读取，一张卡随剧情状态自动切换说法
-- **条件逻辑**：`{{if}} / {{else}} / !`、比较运算符、`&&` / `||`，支持分支与嵌套
-- **随机与时间**：`{{pick::A|B|C}}`（同轮稳定随机）、`{{roll::1d20}}`、`{{random}}`、`{{time}}`、`{{trim}}`、`{{comment}}`
-- **对话感知**：`{{lastUserMessage}}`、`{{lastCharMessage}}`、`{{idleDuration}}`、`{{charFirstMessage::N}}`、`{{original}}`
-- 未知宏原样保留，不破坏模板
-
-### 4. 斜杠命令（上游没有）
-
-输入框直接输入即执行，`/help` 随时查看全部命令与说明；无参数命令点击直接执行，带参数命令点击自动填入输入框补参数后发送。21 个内置命令：
-
-- **角色扮演**：`/impersonate`（AI 以你的视角拟话）、`/continue`（在原回复末尾继续生成）、`/sendas`、`/sys`、`/send`
-- **操控生成**：`/trigger`（不新增消息直接触发回复）、`/sysgen`（让 AI 写系统旁白）、`/gen`
-- **角色卡管理**：`/char-update`、`/char-duplicate`、`/rename-char`
-- **变量与随机**：`/listvar` `/setvar` `/getvar` `/addvar` `/incvar` `/decvar` `/flushvar` `/reroll-pick`（重新掷 `{{pick}}` 稳定随机）
-- **人设**：`/persona`（官方 `/persona-set` 别名）
-- 语义对照酒馆官方实现；技能目录里的命令会随技能自动出现
-
-### 5. 人设（Persona）— 上游没有
-
-官方五档注入位置（IN_PROMPT / TOP / BOTTOM / AT_DEPTH / NONE）、按角色绑定、独立 SYSTEM 消息注入、禁用即不注入。
-
-### 6. 导演备注（Author's Note）— 上游没有
-
-官方间隔语义（1=每次 / N=用户消息倍数）、注入深度、注入角色、总开关。
-
-### 7. 群聊 — 上游没有
-
-多人角色共同对话，每角色独立提示词 / 人设 / 模型；四种选人策略（自然 / 列表 / 带权重随机 / 手动）；自动接话（轮数、延迟可配，用户发言即打断）；发言人状态提示。
+- `container_bg` / `container_log` 走宿主侧 `/data/local/ws`，因此后台任务**不会**继承执行器注入的环境变量（如 `GITHUB_TOKEN`）——脚本里自行 `. /etc/agent.env`
+- `container_edit_file` 依赖容器内 `python3`
+- 这些工具**不做任何挂载**；要加挂载请改容器配置后重启容器
+- 执行器 `/data/local/exec-tool.sh` 需存在于设备上（本仓库不包含它，属设备侧运维脚本）
 
 ---
 
-## 🔮 命理系统（全新，上游没有）
+## 5. 分支与协作模型
 
-一套完整的确定性排盘系统 + 引擎自探索能力。**一个开关同时控制两个工具**（`mingli` 确定性排盘 + `mingli_guide` 解读模板），中文、英文体系名与别名均可识别。
+| 分支 | 角色 |
+|---|---|
+| `main` | **唯一开发主线**，也是默认分支；push 触发 CI 构建 |
+| `master` | 上游 / 中间层原件备份，只读保留 |
+| 已删除 | `mingli` / `mingli2` / `backup-preset-overhaul-20260807` / `feature/claude-code-systems`（命理时代与作者遗留） |
 
-### 十二套排盘体系
+远端约定：
 
-| 体系 | 实际引擎 | 亮点 |
-|---|---|---|
-| 塔罗（韦特） | Arcanite（Python 牌库）+ 元素尊贵引擎 + Kaabalah（JS） | 多牌阵、元素强弱与相位分析、卡巴拉对应 / 生命之树 |
-| 雷诺曼 | Arcanite（Python）+ LenormandFate（Python） | 多牌阵、位置语义、命运连读 |
-| 八字（四柱） | lunar_python + bazi_china（Python） | 十神、月令、干支、生肖、罗睺、大运流年 |
-| 紫微斗数 | iztro（JS，默认）+ 可选倪海夏（JS）/ 纯 Python | 三方四正、大限、流年/月/日/时、小限，多引擎对照 |
-| 现代西洋占星 | Caelus（JS，全量星历） | chart / derived / events / eclipses / Firdaria / profections / directions / ACG |
-| 传统西洋占星 | PySwissEph + FlatLib（Python） | 古典尊贵、Almuten、ruler / exalt、焦伤、卜卦、映点、恒星合相 |
-| 吠陀（印度占星） | PyJHora（Python） | Vimsottari 大运、Ashtakavarga、Tajaka 年运、Raja Yoga / Dosha |
-| 深度古典占星 | stellium（Python，SwissEph 底层） | Firdaria、小限、寿元、Almuten、龙首盘、阿拉伯点、中点、映点 |
-| 人类图 | NatalEngine（JS） | 类型 / 权威 / 中心 / 通道 / 闸门 / 轮回交叉 / Profile、基因钥匙、行运 |
-| 灵数卡巴拉 | Kaabalah（JS） | 灵数六核心、个人年 / 挑战、斐波那契、Gematria 正反查、Ifa Odu |
-| 奇门遁甲（含大六壬） | QiMen TS（JS）+ LiuRen TS（JS） | 日家 / 时家、法术（QMA），大六壬独立引擎 |
-| 六爻（含梅花易数） | ichingshifa（Python，大衍筮法）+ iching-shifa（JS） | **双引擎对照**：同一爻值各自出解读，本卦 / 变卦 / 动爻 |
+- `fork` → `timetetng/rikkahub-plus`（本仓库，日常 push 目标）
+- `origin` → 中间层作者仓库（只读参考）
+- `up` → `rikkahub/rikkahub`（上游，用于观察与择优挑选）
 
-> 引擎信息逐个对照 `app/src/main/python/routes/` 源码确认（2026-08）。
-
-### 架构亮点
-
-- **统一入口**：`mingli_router` 一张路由表，中文名 / 英文名 / 别名全可识别（"紫微" / "ziwei" / "紫微斗数" / "紫薇"）
-- **双引擎桥接**：Python 引擎（lunar_python、bazi_china、Arcanite、PyJHora、ichingshifa、PySwissEph+FlatLib、stellium、纯 Python 紫微）+ QuickJS 预编译引擎（caelus / iztro / natalengine / kaabalah / qimen / liuren / iching-shifa / ziwei-nihai / lunar / astronomy / horoscope / taixuan / node-jhora），跨语言共用一条调用链
-- **交叉验证**：六爻 Python+JS 双引擎对照、紫微三引擎可选、塔罗与卡巴拉互映
-- **确定性结构化输出**：所有排盘返回统一 JSON（宫位、星曜、角度、时间技法字段齐全），AI 解读逐字段使用
-- **强制解读模板**：`mingli_guide(system=体系名)` 读取 `assets/mingli/` 下 14 份权威 Markdown 模板，逐条遵守，跳过视为违规；排盘 → 读模板 → 按模板组织回复的工作流写死在系统提示词组装器里
-- **引擎自探索**：数据不够时用 `eval_javascript`（已加载引擎继续深挖）或 `execute_python`（农历 / 历法 / 自定义计算），不重复写排盘代码
-
-**时间技法**：行运、次限 / 主限推运、太阳 / 月亮返照、年度小限、Firdaria、寿元、Almuten Figuris、阿拉伯点、中点、映点、龙首盘、大限 / 流年 / 流月 / 流日 / 流时。
+**与上游的关系**：本分支以中间层的酒馆增强层为基座，已删除其中的命理体系；上游（RikkaHub）的新功能**按需择优并入**，不做整支 merge。
 
 ---
 
-## 🛠 技能与工具
+## 6. 构建
 
-### 技能系统
+**CI**：push 到 `main` 自动触发 `.github/workflows/build.yml`（GitHub Actions），产物为 `app-arm64-v8a-release.apk`；`workflow_dispatch` 也可手动触发。
 
-**上游**：读 `SKILL.md` + `use_skill` 工具，只有模型主动调用才加载，技能锁在应用私有目录，无安装 / 更新 / 发现机制。
+**本地**：
 
-**本分支**：
+```bash
+./gradlew assembleRelease -x :web:buildWebUi    # 跳过 web 前端构建（需预装 pnpm）
+./gradlew test                                  # JVM 单元测试
+./gradlew lint                                  # Android Lint
+```
 
-- **自动触发**：命中技能关键词时自动把 SKILL.md 注入提示词，不依赖模型自觉
-- **公共技能目录** `/Rikkahub/skills`：文件管理器直接放入即可识别；技能改用外部存储，可随时增删
-- **GitHub 一键安装**：`github.com/owner/repo` 或 `github.com/owner/repo/tree/branch/路径` 链接，支持子目录与多技能仓库
-- **批量下载**：一次导入整个仓库所有技能（GitHub 递归目录树 + 并发下载，信号量限流）
-- **更新检测**：安装时记录仓库源与整目录哈希（`skillShas`），一键检查单个 / 全部技能更新
-- **安装源记录**：识别"本地已有 / 可更新 / 同源"状态，避免重复安装；**技能注册表**：从内置 registry 直接安装
-- **技能页 / 详情页重写** + `use_skill` 工具增强（按分类组织、linked_files、命令提示、实时刷新）
-
-### 工具集
-
-**上游**：时间、剪贴板、日历、JavaScript、屏幕时间、TTS、提问 + 对话、记忆、搜索、技能、工作区。
-
-**本分支新增**：文件操作、Shell、任务、计算器、数据库查询、Python 引擎、网页抓取、命理 ×2；并新增 **Python / JS 双桥接**（AI 可读写对话 / 助手设置 / 群聊、运行 Python / JS 引擎）与**系统提示组装器**（命理工作流 / 工具指引 / 工作伦理）。
-
-### 稳定性
-
-- **后台生成保活**：前台服务异步启动 + 600ms 防抖 + 失败兜底，切后台不打断生成
-- 已清理上游冗余（GitHub 工具、sleep、知识库、日志调试页——见 [DIVERGENCE.md](DIVERGENCE.md) §5，勿加回）
+- **签名**：仓库自带 `app/app.key`（`storePassword=keyPassword=android`）与 CI 里的 `local.properties` 生成步骤 → 重新构建的 APK 与原包同签名，可**直接覆盖安装、数据无损**
+- Python 环境：Chaquopy 3.12，依赖见 `app/build.gradle.kts` 的 `chaquopy.pip` 块
+- 需要 Android SDK（compileSdk 37 / minSdk 26）与 JDK 21
 
 ---
 
-## ✅ 与上游的关系
+## 7. 许可与致谢
 
-- **全部保留**：文件级核对，上游每个文件本地都有对应，无功能删除（仅 4 组文件移动 / 重写）。Material You 主题、多提供商、流式输出、对话分支与重新生成、消息编辑 / 删除 / 翻译、全文搜索（jieba）、收藏、图片生成、TTS / ASR、MCP、工作区沙箱、备份（S3 / WebDAV / 提醒）、Web 服务端、聊天导出均原样可用。
-- **差异规模**：约 626 个文件改动，+66,000 行，领先上游 1900+ 提交；上游新功能可随时 `git fetch upstream && git merge upstream/master` 合入（冲突处理手册见 [DIVERGENCE.md](DIVERGENCE.md)）。
-
-## 🔗 相关链接
-
-- 上游项目：[RikkaHub](https://github.com/rikkahub/rikkahub)
-- 差异与合并手册：[DIVERGENCE.md](DIVERGENCE.md)
-
----
-
-如果这个分支对你有用，请点个 ⭐ Star 支持一下 ✨
+- 本项目遵循 **AGPL-3.0**（见 [LICENSE](LICENSE)）
+- 基于 [RikkaHub](https://github.com/rikkahub/rikkahub)（作者 rerere）与 [rikkahub-plus](https://github.com/heikeyangle-code/rikkahub-plus) 的酒馆增强层二次开发

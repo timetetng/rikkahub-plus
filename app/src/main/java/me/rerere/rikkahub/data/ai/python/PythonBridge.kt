@@ -211,7 +211,7 @@ class PythonBridge(
     }
 
     // ============================================================
-    // JS 引擎桥接 (供 mingli_router.py 调用)
+    // JS 引擎桥接（QuickJS，供 Python 侧调用）
     // ============================================================
 
     fun evalJavascript(library: String, code: String): String = runBlocking {

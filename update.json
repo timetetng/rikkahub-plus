@@ -1,12 +1,6 @@
 {
   "version": "2.4.6",
-  "publishedAt": "2026-08-13T15:58:35Z",
-  "changelog": "基于上游 2.4.6 代码，保留命理/酒馆/群聊等自定义功能。\n\n- 合入上游 AI 模块重构与搜索更新\n- 更新检查已切换到本仓库，不再跟随官方版本",
-  "downloads": [
-    {
-      "name": "rikkahub-plus-2.4.6-arm64-v8a.apk",
-      "url": "https://github.com/heikeyangle-code/rikkahub-plus/releases/download/v2.4.6/rikkahub-plus-2.4.6-arm64-v8a.apk",
-      "size": "约 171 MB"
-    }
-  ]
+  "publishedAt": "2026-09-14T00:00:00Z",
+  "changelog": "自维护分支（main）起点。\n\n- 移除命理/排盘：工具层与引擎层（13 个 JS 引擎、约 20 个 Python 命理包、offline_pkgs）全部删除，CI 与 APK 同步瘦身\n- 新增 droidspaces 容器桥接：container_exec / read_file / write_file / edit_file / list / bg / log，全部免审批\n- 移除硬编码提示词注入（tool_selection / work_ethic / mingli_workflow）\n- 更新检查保持停用：客户端不再请求本文件，此处仅作变更记录",
+  "downloads": []
 }

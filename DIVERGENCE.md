@@ -1,127 +1,61 @@
-# DIVERGENCE — 本地分支与上游 rikkahub 的差异地图
+# DIVERGENCE — 本分支的来历、改动与合并手册
 
-> 用途：合并上游（`git fetch upstream && git merge upstream/master`）时的冲突处理手册。
-> 维护：每次合入上游后更新本节“状态”；每次改动核心文件后更新对应条目。
+> 维护约定：本文件描述**本仓库（`timetetng/rikkahub-plus`，分支 `main`）相对上游的差异**。
+> 每次并入上游功能、或改动核心链路后，同步更新对应条目。
 
-## 0. 当前状态
+## 0. 三层关系
+
+```
+rikkahub/rikkahub            ← 上游（原生 LLM 客户端）
+        │  分叉点 aac6e963（2026-08-13，本地基座）
+        ↓
+heikeyangle-code/rikkahub-plus  ← 中间层（作者 fork：酒馆增强层 + 命理体系）
+        ↓  我们在此之上继续开发
+timetetng/rikkahub-plus @ main  ← 本仓库（自维护主线，2026-09 起）
+```
 
 | 项 | 值 |
 |---|---|
-| 本地分支 | `mingli2` |
-| 上游 | `upstream/master`（github.com/rikkahub/rikkahub） |
-| 最近合入 | `aac6e9638`（2026-08-13，含 AI 模块重构 / 搜索模式 / 构建重构） |
-| 领先提交数 | 约 1780+ |
-| 上游文件被本地修改 | 约 100 个（含重命名） |
-| 本地独有文件 | 约 50 个 |
+| 本分支 | `main`（默认分支，唯一开发主线） |
+| 保留备份 | `master`（中间层原件，只读） |
+| 上游 | `up` → `rikkahub/rikkahub` `master` |
+| 中间层 | `origin` → `heikeyangle-code/rikkahub-plus` |
+| 分叉点 | `aac6e963`（2026-08-13）；上游此后领先约 148 个提交 |
 
-## 1. 合并工作流（推荐）
+## 1. 本分支相对中间层做了什么
 
-1. **频繁合**：上游每次更新就 `git fetch upstream`，需要时 `git merge upstream/master`。不要攒几百个提交再合。
-2. 2026-08-13 合入注意事项：AI 流式接口已改为 `StreamChunkHandler` / `handleTextGenerationResult`（旧 `handleMessageChunk`/`MessageChunk` 已删除）；搜索改为 `SearchMode`（OFF/LOCAL/BUILT_IN）；keep 规则迁移到 `app/src/main/keepRules/rikkahub.keep`（本地 Chaquopy/Compose 规则已并入，不要再改 `app/proguard-rules.pro`）；应用版本与上游一致（2.4.6/173）；更新检查已切换到本仓库 `update.json`（`raw.githubusercontent.com/heikeyangle-code/rikkahub-plus/mingli2/update.json`），不再指向官方服务器。以后发版：改 `update.json`（版本号+下载链接）+ 发布 GitHub Release，用户端即可收到更新。。
-2. 冲突按本文件分类处理：
-   - 本地**独有文件**（第 3 节）→ 永不冲突，忽略。
-   - **核心生成链**（第 2 节 A 组）→ 人工逐块审，两边语义都要保留。
-   - **酒馆/工具/群聊**（本地方向，上游没有）→ 冲突时以上游文件为基底，把本地功能重新叠上去。
-   - **可回退项**（第 5 节）→ 尽量保持上游原样。
-3. 合并后本地检查（不本地编译）：`git diff --check`；推送后靠 CI 验证。
-4. 若上游新增了本地没有的功能，且不与本地冲突 → 直接收下，并补进本文件。
-
-## 2. 上游文件被本地修改（按合并风险分组）
-
-### A. 核心生成链（最高风险，冲突需人工审）
-
-| 文件 | 改动量 | 本地改了什么 | 合并建议 |
-|---|---|---|---|
-| `service/ChatService.kt` | +509/-55 | 工具构建、前台服务、群聊生成、斜杠注入、发送链路 | 上游更新先合，再叠本地逻辑 |
-| `data/ai/GenerationHandler.kt` | +638/-185 | 系统提示组装（命理工作流）、transform 链、预构建 system | 同上 |
-| `data/ai/transformers/PromptInjectionTransformer.kt` | +540/-11 | 世界书官方对齐（选择性逻辑/分组/递归/粘性/预算） | 本地逻辑已对照酒馆官方，合时保留 |
-| `data/ai/transformers/PlaceholderTransformer.kt` | +358/-6 | 宏引擎 2.0 接入、`{{original}}` 等修正 | 保留本地 |
-| `data/ai/transformers/Transformer.kt` | +36/-2 | TransformerContext 扩展字段 | 保留 |
-| `data/model/Assistant.kt` | +382/-22 | 工具/技能/群聊/酒馆/命理/宏/知识库(已删) 字段 | 合时保留本地字段 |
-| `data/model/Conversation.kt` | +3 | 小改 | 低风险 |
-| `data/datastore/PreferencesStore.kt` | +105/-1 | 本地设置（群聊/酒馆/工具/压缩等） | 保留本地设置项 |
-| `data/ai/GenerationPrompts.kt` | +33 | 本地提示词 | 保留 |
-| `ai/ui/Message.kt` | +184 | 消息模型扩展（UIMessagePart/Annotation 合并进此文件） | 上游也改此文件时容易冲突 |
-| `ai/registry/ModelRegistry.kt` | ±20 | 本地模型注册 | 低风险 |
-
-### B. 酒馆兼容（本地独有方向，上游没有对应功能）
-
-| 文件 | 改动量 | 说明 |
-|---|---|---|
-| `ui/pages/assistant/detail/TavernCharacterCard.kt` | +1796 | 角色卡详情/内嵌世界书编辑器（本地新增） |
-| `ui/pages/assistant/detail/AssistantImporter.kt` | +778/-183 | 角色卡导入解析（V2/V3、世界书、PHI、深度提示） |
-| `ui/pages/extensions/PromptPage.kt` | +1169/-55 | 世界书/提示注入编辑页 |
-| `data/model/TavernCard.kt` | +118 | 角色卡数据模型 |
-| `utils/CardExporter.kt` | +317 | 角色卡导出（PNG/JSON） |
-| `data/ai/transformers/AuthorsNoteTransformer.kt` / `ui/pages/setting/AuthorsNotePage.kt` | +84 / +413 | 导演备注（官方语义） |
-| `data/model/Persona.kt` / `ui/pages/setting/PersonaPage.kt` | +28 / +680 | 人设 |
-| `data/model/AuthorNotePosition.kt` / `GenerationType.kt` | +44 / +29 | 枚举 |
-| `data/ai/transformers/MacroEngine.kt` | +879 | 宏引擎 2.0 |
-| `ui/components/ai/SlashCommands.kt` / `MacroVarSlashOps.kt` | +257 / +92 | 斜杠命令 |
-| `ui/pages/extensions/PromptVM.kt` | +77 | 世界书双向同步 |
-
-### C. 群聊（本地独有）
-
-`data/model/GroupChat.kt`(+52)、`GroupSpeakerSelector.kt`(+148)、`ui/pages/chat/GroupChatPage.kt`(+1167)、`GroupChatListPage.kt`(+242)
-
-### D. 工具与 Agent（本地独有）
-
-`data/ai/tools/LocalTools.kt`(+489，从 `tools/local/` 移动)、`FileTools.kt`(+430)、`TaskTools.kt`(+430)、`DatabaseQueryTool.kt`(+326)、`ShellTools.kt`(+81)、`PythonTools.kt`(+152)、`CalculatorTool.kt`(+127)、`WebFetchTool.kt`(+111)、`tools/local/MingliTool.kt`(+138)、`MingliGuideTool.kt`(+111)、`data/ai/python/PythonBridge.kt`(+235)、`JsBridge.kt`(+37)、`data/ai/prompts/SystemPromptAssembler.kt`(+134)、`data/ai/transformers/SkillAutoTriggerTransformer.kt`(+94)、`data/files/PluginManifest.kt`(+119)、`SkillRegistry.kt`(+43)、`SkillFrontmatterParser.kt`(+21)
-
-上游的 `data/ai/tools/SkillsTools.kt` 本地改了 +64/-35（技能工具）；`data/files/SkillManager.kt` +78/-5（**已回退缓存改动**，仅剩外部存储/公共目录两个早期差异，见第 5 节）。
-
-### E. 数据库与迁移
-
-| 文件 | 说明 |
+| 改动 | 范围 |
 |---|---|
-| `data/db/AppDatabase.kt` | 版本 26；本地实体增减（知识库实体已删）、DAO 增删 |
-| `data/db/migrations/Migration_20_21.kt` ~ `25_26.kt` | 本地新增/修改；其中 20_21/22_23 曾建知识库表，25_26 删除。**迁移链不可删**，否则升级崩溃 |
-| `data/db/dao/MessageNodeDAO.kt` | +3，小改 |
+| **移除命理 / 排盘（工具层）** | `MingliTool` / `MingliGuideTool` 及其在 `ChatService` 的注册、设置页开关、`assets/mingli/` 14 份解读模板、python 侧 `mingli_router` 与 `routes/` |
+| **移除命理 / 排盘（引擎层）** | 13 个 QuickJS 引擎的 CI 编译步骤、约 20 个 Chaquopy Python 命理包、`app/offline_pkgs/` 全部轮子、`app/src/main/python/{bazi_china/, ziwei_paipan.py, tarot_elemental_engine.py, lenormand_engine.py, lenormand-spreads.json}`、`ci/` 下全部补丁脚本 |
+| **移除硬编码提示词注入** | `GenerationHandler.leadInInstructions` 里的 `<tool_selection>` / `<work_ethic>` / `<mingli_workflow>` 三段 |
+| **停用更新检查** | `ChatVM.updateState` 直接返回停用态；DataStore 里 `updateCheckDisabledUntilEpochMillis` 设为 2100 年（双保险）；`UpdateChecker.API_URL` 指向本仓库 `main/update.json` |
+| **新增容器桥接** | `data/ai/tools/ContainerTools.kt` + `LocalToolOption.ContainerTools` + `Assistant` 三字段 + `ChatService` 两处注册 + 设置页 UI（详见 README §4） |
+| **仓库卫生** | 删除误入仓库的 `ci_latest_logs.zip`、`README_EN.md`、死字段 `enableMingliTools`、`.gitignore` 里的 stellium 残留项 |
 
-### F. 路由 / DI / Web
+## 2. 高风险文件（改上游或并入上游时人工审）
 
-`RouteActivity.kt` ±1501（本地页面入口最多，冲突高）、`RikkaHubApp.kt` +36/-49、`di/AppModule.kt`、`DataSourceModule.kt`、`RepositoryModule.kt`、`ViewModelModule.kt`。
-Web 相关只有小改（`web/routes/ConversationRoutes.kt` +47/-25、`SettingsRoutes.kt` +15、`WebApiModule.kt` +12、`FolderRoutes.kt` +6、`WebServerManager.kt` +4）——**约定：尽量不动 web**。
-
-### G. 其余 UI/工具
-
-`ui/components/ai/ChatInput.kt`(+455)、`ui/pages/chat/ChatPage.kt`(+312/-79)、`ChatDrawer.kt`(+173/-189)、`ChatDrawerVM.kt`、`ChatVM.kt`(+54)、`ui/components/message/ChatMessageTools.kt`(+774)、`ChatMessage.kt`、`ChatMessageActions.kt`、`AssistantDetailPage.kt`(+519)、`AssistantDetailVM.kt`、`AssistantLocalToolPage.kt`(+169/-7)、`AssistantBasicPage.kt`、`AssistantVM.kt`、`AssistantPage.kt`、`SettingPage.kt`(+183)、`SettingPreferencesUIPage.kt`(+326)、`ui/pages/chat/Export.kt`、`utils/ImageUtils.kt`、`ContextUtil.kt`、`CrashHandler.kt`、`service/ChatNotificationManager.kt`、`ui/components/richtext/Markdown.kt`、`MarkdownNew.kt`、`FilesPicker.kt`、`ChatList.kt`、`data/repository/ConversationRepository.kt`(+32/-50)、`FolderRepository.kt`、`data/export/ExportSerializer.kt`(+85/-8)
-
-## 3. 本地独有文件（永不参与上游冲突）
-
-约 50 个新文件，包括：
-- 酒馆：`data/ai/transformers/ContextInjectorTransformer.kt`、`ui/components/ai/SlashCommands.kt`、`MacroVarSlashOps.kt`、`utils/CardExporter.kt` 等
-- 群聊：`GroupChat.kt`、`GroupChatPage.kt`、`GroupChatListPage.kt`、`GroupSpeakerSelector.kt`
-- 工具：`FileTools.kt`、`TaskTools.kt`、`DatabaseQueryTool.kt`、`ShellTools.kt`、`PythonTools.kt`、`CalculatorTool.kt`、`WebFetchTool.kt`、`MingliTool.kt`、`MingliGuideTool.kt`、`PythonBridge.kt`、`JsBridge.kt`、`SystemPromptAssembler.kt`、`SkillAutoTriggerTransformer.kt`
-- 宏/斜杠：`MacroEngine.kt`
-- 服务：`service/GenerationForegroundService.kt`
-
-合并时这些文件直接保留本地版本即可。
-
-## 4. 上游文件被本地删除/移动
-
-| 文件 | 处理 |
+| 文件 | 本地改了什么 |
 |---|---|
-| `data/ai/tools/local/JavascriptTool.kt` / `LocalToolOption.kt` / `LocalTools.kt` | 移动到 `data/ai/tools/`（功能保留） |
-| `ui/pages/extensions/skills/SkillsPage.kt` / `SkillsVM.kt` / `SkillDetailPage.kt` / `SkillDetailVM.kt` | 移动到 `ui/pages/extensions/`（本地重写） |
-| `ai/ui/UIMessagePart.kt` / `UIMessageAnnotation.kt` | 合并进 `ai/ui/Message.kt` |
-| `ui/pages/setting/SettingMcpPage.kt` | 本地移除（MCP 设置并入别处） |
-| `data/ai/tools/GitHubTool.kt`、`SleepTool.kt`、知识库整套 | 已按“上游没有”删除，**不要再加回** |
+| `service/ChatService.kt` | 工具构建（含 `container_*` 注册两处）、前台服务保活、群聊生成、斜杠注入、发送链路 |
+| `data/ai/GenerationHandler.kt` | 系统提示组装、transformer 链、缓存 |
+| `data/ai/transformers/PromptInjectionTransformer.kt` | 世界书官方语义对齐（选择性逻辑 / 分组 / 递归 / 粘性 / 预算） |
+| `data/ai/transformers/PlaceholderTransformer.kt` | 宏引擎 2.0 接入 |
+| `data/model/Assistant.kt` | 工具 / 技能 / 群聊 / 酒馆 / 宏 / 容器桥接字段 |
+| `data/ai/tools/*` | 本地独有工具集（见 README §2.5） |
+| `ui/pages/assistant/detail/AssistantLocalToolPage.kt` | 本地工具开关与容器桥接配置项 |
+| `app/build.gradle.kts` | Chaquopy pip 依赖清单（已精简为通用依赖） |
+| `.github/workflows/build.yml` | 自维护 CI（触发分支 `main`） |
 
-## 5. 已对齐 / 已回退项（保持）
+## 3. 本地独有 / 已删除，勿再加回
 
-- GitHub 工具及其 UI：已删（上游没有）
-- sleep 工具：已删（上游没有）
-- 知识库整套：已删（上游没有；迁移链保留，25_26 清理旧表）
-- SkillManager：已回退本轮缓存改动；**剩余两个早期差异**（技能目录用外部存储 + `/Rikkahub/skills` 公共目录）是技能安装依赖，默认保留
-- MCP：工具名与校验对齐上游
-- 文件工具：已去掉 skill 目录拼接
-- 日志调试（DeveloperPage/AILogging）：已删（上游没有）
+- **不要加回**：命理体系（工具、引擎、模板、python 路由）、硬编码提示词注入三段、中间层的 `ci/` 补丁脚本、`offline_pkgs/` 离线轮子
+- **本地独有模块**：`LocaleTui`、`trace-cli`、`sample-skills` 等（上游无对应文件，合并时不会冲突）
+- 上游已移除但本地仍在用的旧 API：合并上游时若发现上游删掉了本地依赖的接口，**先补适配再合**
 
-## 6. 冲突处理速查
+## 4. 并入上游功能的原则（用户硬要求）
 
-1. `ChatService.kt` / `GenerationHandler.kt`：上游改动先收，本地功能块（工具构建、transform 链、命理系统提示）重新叠上去。
-2. `RouteActivity.kt`：各页面 entry 是追加式，冲突通常可两边都留。
-3. `Assistant.kt` / `PreferencesStore.kt`：字段是追加式，上游删字段时检查本地是否在用。
-4. 数据库：上游加 migration 时，注意本地版本号（当前 26）与迁移链；不要在本地重写已发布的迁移。
-5. 合完：`git diff --check` + 推送 + CI；**不在本地编译**。
+1. **不做整支 merge**（历史教训：96 个冲突文件）；留在本基座**逐条择优 cherry-pick**
+2. **不能漏前置依赖**（如工具装配重构这类前置提交）→ 做法：**分批累积 apply → 推 CI 真编译验证**，编译不过就回头补前置
+3. 每批并入前先审核 + 解冲突 + 说明难度，**给用户看 diff 之后才推**
+4. 已排除：voice / ASR / TTS（用户不用）、豆包搜索（无 key）、上游的 proot workspace 相关
