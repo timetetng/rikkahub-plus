@@ -121,6 +121,8 @@ build-logic/    Gradle 约定插件
 
 **一套工具，多个环境**：让 AI 直接在本机的 droidspaces 容器、真机全局命名空间或 ZeroTermux 里干活，不必手写 `su -c ... <<'EOF'` 那套转义。
 
+> 完整使用文档（自举装机、自检清单、坑清单）：[`docs/agent-exec-guide.md`](docs/agent-exec-guide.md)；同一套工具也支持远程 ssh 主机（`target=ssh:<别名>`，别名取自容器 `~/.ssh/config`）。
+
 | 工具 | 参数 | 行为 |
 |---|---|---|
 | `env_exec` | `command`, `target?`, `cwd?`, `timeout_sec?` | 在指定环境执行命令，返回 `exit_code / stdout / stderr`；超时（默认取助手「单工具执行超时」，上限 600s）**会 kill 进程** |
@@ -186,7 +188,7 @@ build-logic/    Gradle 约定插件
 |---|---|---|
 | **KernelSU(-Next) + `su`** | app 以 root 身份发起命令 | `su` 在 `/system/bin/su`，免密；本 app 需在 KSU 里授权 |
 | **droidspaces + 一个容器** | 真正干活的 Linux 环境 | 容器名可配（见 §4 的「默认环境」）；换容器只改这一个值 |
-| **设备侧执行器** `/data/local/exec-tool.sh`（+ `/data/local/ws`） | 把「su → droidspaces → 容器 shell」三层封成一个入口，顺带处理 mount ns 遮蔽 | **不在本仓库**，属设备运维脚本；容器名作为第 2 参数传入，所以换容器**不用改脚本** |
+| **设备侧执行器** `/data/local/exec-tool.sh`（+ `/data/local/ws`） | 把「su → droidspaces → 容器 shell」三层封成一个入口，顺带处理 mount ns 遮蔽 | 仓库内有**可移植副本** `docs/device/exec-tool.sh`、`docs/device/ws`；装机与自举步骤见 [`docs/agent-exec-guide.md`](docs/agent-exec-guide.md) §1。容器名作为第 2 参数传入，换容器**不用改脚本** |
 
 换一个设备复刻时，需要按顺序确认：① KSU 授权 → ② `droidspaces show` 能看到容器 → ③ `/data/local/exec-tool.sh <mode> <容器名>` 能进容器 → ④ 助手卡片里把「默认环境」改成你的容器名。
 
