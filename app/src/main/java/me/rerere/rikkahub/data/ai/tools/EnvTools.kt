@@ -38,6 +38,15 @@ private const val WS_TOOL = "/data/local/ws"
 private const val DROIDSPACES = "/data/local/Droidspaces/bin/droidspaces"
 private const val HOST_BG_DIR = "/data/local/tmp/rh-bg"
 private const val TERMUX_BG_DIR = "/data/user/0/com.termux/files/home/.rh-bg"
+private const val SSH_BG_DIR = "\$HOME/.rh-bg"
+
+/**
+ * 远程 ssh 的固定选项：免密（BatchMode）+ 连接复用（ControlMaster）。
+ * 冷连 1.7~2.5s，复用后 ~0.15s；ControlPath 建在容器 root 的 ~/.ssh/cm 下（跨调用持久）。
+ */
+private const val SSH_OPTS = "-T -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 " +
+    "-o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o ControlPath=/root/.ssh/cm/%C " +
+    "-o ControlPersist=10m"
 
 private const val MAX_READ_BYTES = 2L * 1024 * 1024
 private const val MAX_WRITE_BYTES = 2 * 1024 * 1024
@@ -51,8 +60,13 @@ private data class ExecResult(val exitCode: Int, val stdout: String, val stderr:
 
 /** 目标环境 */
 private data class Target(val mode: String, val container: String) {
-    val label: String get() = if (mode == "arch") "arch:$container" else mode
+    val label: String get() = when (mode) {
+        "arch" -> "arch:$container"
+        "ssh" -> "ssh:$container"
+        else -> mode
+    }
     val isContainer: Boolean get() = mode == "arch"
+    val isSsh: Boolean get() = mode == "ssh"
 }
 
 /** 宿主目录 ⇄ 容器的 bind 挂载视角（container.config 的 bind_mounts） */
@@ -70,8 +84,13 @@ private fun sanitizeName(s: String): String =
 private fun defaultCwd(t: Target): String = when (t.mode) {
     "root" -> "/"
     "termux" -> "/data/user/0/com.termux/files/home"
+    "ssh" -> ""                                  // 远程 shell 自带 $HOME，不 cd
     else -> "/root"
 }
+
+/** ssh 别名：允许中文等非 ASCII（Host 别名可以是「腾讯云」），剔除空白与 shell 元字符 */
+private fun sanitizeSshAlias(raw: String): String =
+    raw.trim().filter { !it.isWhitespace() && it !in "'\"`\\;\$&|()<>*?[]{}!#~" }
 
 private fun parseTarget(raw: String): Target {
     val a = raw.trim()
@@ -80,6 +99,11 @@ private fun parseTarget(raw: String): Target {
         a == "root" -> Target("root", "")
         a == "termux" -> Target("termux", "")
         a.startsWith("ct:") -> Target("arch", sanitizeName(a.removePrefix("ct:")).ifBlank { "arch" })
+        a.startsWith("ssh:") -> {
+            val alias = sanitizeSshAlias(a.removePrefix("ssh:"))
+            require(alias.isNotEmpty()) { "env: ssh target needs a Host alias, e.g. target=\"ssh:tzk123\"" }
+            Target("ssh", alias)
+        }
         else -> Target("arch", sanitizeName(a).ifBlank { "arch" })   // 裸容器名也认
     }
 }
@@ -94,7 +118,7 @@ private fun argvFor(t: Target): Array<String> =
 
 /** 路径翻译：宿主视角 ⇄ 目标视角；返回 (最终路径, 说明) */
 private fun mapPath(t: Target, path: String): Pair<String, String?> {
-    if (t.mode == "termux") return path to null   // termux 只能看 $PREFIX/HOME 与 /storage，不做映射
+    if (t.mode == "termux" || t.mode == "ssh") return path to null   // 远程/termux 路径原样；只有容器需要 bind 视角翻译
     val pairs = if (t.isContainer) PATH_MAP else PATH_MAP.map { it.second to it.first }
     for ((from, to) in pairs) {
         if (path == from || path.startsWith("$from/")) {
@@ -168,9 +192,29 @@ private suspend fun runProcess(argv: Array<String>, stdin: String?, timeoutSec: 
     return result
 }
 
+/**
+ * 在远程主机（ssh:<alias>）执行脚本：走容器 arch 里的 ssh 客户端（config 与密钥都在容器 ~/.ssh），
+ * 脚本经 heredoc 喂给远程 `bash -s`，零转义；别名只写 Host 名，不需要 user@host -p port。
+ */
+private suspend fun runInSsh(t: Target, script: String, timeoutSec: Long): ExecResult {
+    val alias = t.container
+    require(!alias.startsWith("-")) { "env: ssh alias must not start with '-'" }
+    var delim = "__ENV_SSH_EOF__"
+    while (script.contains(delim)) delim += "_X"
+    val body = if (script.endsWith("\n")) script else script + "\n"
+    val wrapped = buildString {
+        append("mkdir -p /root/.ssh/cm && chmod 700 /root/.ssh/cm\n")
+        append("ssh ").append(SSH_OPTS).append(" ").append(shq(alias))
+        append(" -- bash -s <<'").append(delim).append("'\n")
+        append(body)
+        append(delim).append("\n")
+    }
+    return runProcess(arrayOf("su", "-c", "$EXEC_TOOL arch"), wrapped, timeoutSec)
+}
+
 /** 在目标环境里执行脚本 */
 private suspend fun runInTarget(t: Target, script: String, timeoutSec: Long): ExecResult =
-    runProcess(argvFor(t), script, timeoutSec)
+    if (t.isSsh) runInSsh(t, script, timeoutSec) else runProcess(argvFor(t), script, timeoutSec)
 
 /** 在宿主侧直接跑（ws 等辅助脚本） */
 private suspend fun runHostScript(shellCommand: String, stdin: String?, timeoutSec: Long): ExecResult =
@@ -191,7 +235,8 @@ private fun failWith(stderr: String, exitCode: Int, fallback: String): Nothing =
 
 private const val TARGET_DESC =
     "Which environment this call runs in: omit = assistant default; arch (default container) | ct:<name> (another " +
-        "droidspaces container) | root (real device, global mount ns) | termux (ZeroTermux)."
+        "droidspaces container) | root (real device, global mount ns) | termux (ZeroTermux) | ssh:<alias> (a remote " +
+        "host, taken from the arch container's ~/.ssh/config — write the Host alias only, no user@host/-p/keys)."
 
 fun createEnvTools(
     context: Context,
@@ -294,8 +339,10 @@ fun createEnvTools(
                 ?: defTimeout).coerceIn(5L, MAX_TIMEOUT_SEC)
 
             val script = buildString {
-                append("cd ").append(shq(workdir))
-                append(" || { echo 'env_exec: no such working directory' >&2; exit 4; }\n")
+                if (workdir.isNotEmpty()) {
+                    append("cd ").append(shq(workdir))
+                    append(" || { echo 'env_exec: no such working directory' >&2; exit 4; }\n")
+                }
                 append(command)
             }
             val res = runInTarget(t, script, timeout)
@@ -535,7 +582,17 @@ fun createEnvTools(
                 append("timeout 25 \$DS --name=").append(t.container)
                 append(" run sh -c 'docker ps --format \"{{.Names}}  {{.Image}}  {{.Status}}\" 2>&1 || true' 2>&1")
             }
-            val res = runHostScript(script, null, defTimeout.coerceAtLeast(30L))
+            val res = if (t.isSsh) {
+                val remote = buildString {
+                    append("echo '=== ssh ").append(t.container).append(" ==='\n")
+                    append("hostname; uname -sr; (uptime -p 2>/dev/null || uptime)\n")
+                    append("echo; echo '=== remote bg jobs (~/.rh-bg) ==='\n")
+                    append("ls -1 \"\$HOME/.rh-bg\"/*.log 2>/dev/null | sed 's#.*/##' || echo '(none)'\n")
+                }
+                runInSsh(t, remote, defTimeout.coerceAtLeast(30L))
+            } else {
+                runHostScript(script, null, defTimeout.coerceAtLeast(30L))
+            }
             val payload = buildJsonObject {
                 put("target", t.label)
                 put("exit_code", JsonPrimitive(res.exitCode))
@@ -584,13 +641,17 @@ fun createEnvTools(
                 ?: error("env_bg: 'command' is required")
             val cwdForJob = if (t.isContainer) cfgCwd else defaultCwd(t)
             val script = buildString {
-                append("cd ").append(shq(cwdForJob)).append(" || true\n")
+                if (cwdForJob.isNotEmpty()) append("cd ").append(shq(cwdForJob)).append(" || true\n")
                 append(command).append("\n")
             }
             val res = if (t.isContainer) {
                 runHostScript("WS_NAME=${t.container} $WS_TOOL bg $name", script, 120L)
             } else {
-                val dir = if (t.mode == "termux") TERMUX_BG_DIR else HOST_BG_DIR
+                val dir = when (t.mode) {
+                    "termux" -> TERMUX_BG_DIR
+                    "ssh" -> SSH_BG_DIR
+                    else -> HOST_BG_DIR
+                }
                 val job = buildString {
                     append("d=").append(dir).append("\n")
                     append("mkdir -p \"\$d\"\n")
@@ -663,7 +724,11 @@ fun createEnvTools(
                     if (res.stderr.isNotBlank()) put("stderr", JsonPrimitive(trimOutput(res.stderr)))
                 }
             } else {
-                val dir = if (t.mode == "termux") TERMUX_BG_DIR else HOST_BG_DIR
+                val dir = when (t.mode) {
+                    "termux" -> TERMUX_BG_DIR
+                    "ssh" -> SSH_BG_DIR
+                    else -> HOST_BG_DIR
+                }
                 val script = buildString {
                     append("d=").append(dir).append("\n")
                     append("[ -f \"\$d/").append(name).append(".log\" ] || { echo 'env_log: no such job' >&2; exit 3; }\n")

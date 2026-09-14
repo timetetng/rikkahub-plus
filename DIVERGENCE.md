@@ -31,6 +31,7 @@ timetetng/rikkahub-plus @ main  ← 本仓库（自维护主线，2026-09 起）
 | **移除硬编码提示词注入** | `GenerationHandler.leadInInstructions` 里的 `<tool_selection>` / `<work_ethic>` / `<mingli_workflow>` 三段 |
 | **停用更新检查** | `ChatVM.updateState` 直接返回停用态；DataStore 里 `updateCheckDisabledUntilEpochMillis` 设为 2100 年（双保险）；`UpdateChecker.API_URL` 指向本仓库 `main/update.json` |
 | **新增容器桥接** | `data/ai/tools/ContainerTools.kt` + `LocalToolOption.ContainerTools` + `Assistant` 三字段 + `ChatService` 两处注册 + 设置页 UI（详见 README §4） |
+| **新增 ssh 远程目标** | `EnvTools.kt` 支持 `target=ssh:<别名>`：别名/密钥来自容器 `~/.ssh/config`，七个 `env_*` 工具通用；强制 `BatchMode` + `ControlMaster` 连接复用；远程后台任务落 `~/.rh-bg/` |
 | **仓库卫生** | 删除误入仓库的 `ci_latest_logs.zip`、`README_EN.md`、死字段 `enableMingliTools`、`.gitignore` 里的 stellium 残留项 |
 
 ## 2. 高风险文件（改上游或并入上游时人工审）

@@ -42,6 +42,7 @@
 | **容器**（droidspaces） | 一个完整 Linux（包管理器 / 服务 / 可能是 docker）；宿主目录以 `/mnt/*` 出现在容器里 | `target=arch`（换成你的容器名） |
 | **真机全局 ns** | `/data/user/0/*`（所有 app 私有数据）、`/data/adb`、`/system`、`pm`/`dumpsys` | `target=root` |
 | **ZeroTermux** | `$PREFIX`、`pkg install` | `target=termux` |
+| **远程主机**（ssh） | 另一台 Linux（云主机、家里服务器…），整套工具都能用 | `target=ssh:<别名>`（别名来自容器 `~/.ssh/config`） |
 
 **记住这条路**：`app → su → 执行器 /data/local/exec-tool.sh → droidspaces → 容器 shell`。
 执行器存在的意义是把「su 的 mount ns 遮蔽、droidspaces 参数、引号转义」全封在内部 —— **不要绕开它手写 `su`/`nsenter`/`mount`**。
@@ -96,6 +97,7 @@ dumpsys package me.rerere.rikkahub | grep -E "versionName|versionCode"
 | `ct:<名字>` / 裸容器名 | 指定容器（例如 `kali`） |
 | `root` | 真机全局 mount ns |
 | `termux` | ZeroTermux |
+| `ssh:<别名>` | 远程主机，别名取自**容器 root 的 `~/.ssh/config`**（如 `ssh:tzk123`、`ssh:腾讯云`） |
 
 ### 2.2 路径按**宿主视角**写
 `/data/local` `/data/user` `/data/app` `/data/media/0` `/data/adb` 会被自动翻译成容器里的 `/mnt/*`，结果里回显 `path_mapped`；反向也认（容器视角写，也翻译成宿主视角）。
@@ -108,7 +110,28 @@ dumpsys package me.rerere.rikkahub | grep -E "versionName|versionCode"
 
 ---
 
-## 3. 兜底路径：执行器 heredoc（**自检、装执行器、`ws` 专属子命令**时用）
+### 2.4 远程主机（`target=ssh:<别名>`）
+
+在别的机器上干活和在本地一样：七个工具全都能用，**别名只写 `.ssh/config` 里的 Host 名**，不要写 `user@host -p port`（那些应该固化在 config 里：省 token，也不会手滑连错机器）。
+
+```sh
+env_exec(command="systemctl is-active docker; ls /root", target="ssh:tzk123")
+env_read_file(path="/etc/nginx/nginx.conf", target="ssh:腾讯云")
+env_bg(name="pull", command="docker pull nginx:alpine", target="ssh:腾讯云")
+env_log(name="pull", target="ssh:腾讯云")
+```
+
+机制与前提：
+
+- ssh 客户端**在容器里**（宿主 Android 没有 ssh）→ 第一次调用若容器没起，会先起容器（~4s），之后走连接复用
+- 别名 / 密钥 / 端口 / 跳板（`ProxyJump`）全部来自**容器 root 的 `~/.ssh/config`**；`IdentityFile` + `IdentitiesOnly yes` 最稳
+- 工具只做 `ssh -T <别名> -- bash -s`，脚本走 stdin → **零转义**（引号 / 反引号 / 内嵌 heredoc 都原样）
+- 已强制 `BatchMode=yes`（绝不会卡在密码提示）+ `ControlMaster/ControlPersist`：冷连 1.7~2.5s，复用后 ~0.15s
+- 路径**原样**，不做 `/mnt/*` 翻译（那是容器的事）；省略 `cwd` 时落在远程 `$HOME`
+- `env_bg` 的远程任务放在 `~/.rh-bg/<名字>.sh` + `.log`，用 `env_log` 取
+
+---
+（**自检、装执行器、`ws` 专属子命令**时用）
 
 这条路和 §2 是**同一条底层链路**，只是入口更原始 —— 不依赖 app 里的工具开关，**任何时候都能用**：
 
@@ -171,6 +194,7 @@ CMD_EOF
 | 14 | 真机通道 | `env_exec("ls /data/user/0 \| head", target="root")` | 能看到**别的应用**目录（不是只有自己+GMS） |
 | 15 | app 侧文件 | 文件工具列 `/storage/emulated/0/Documents/` | 能列（注意 §5.4 的属主坑） |
 | 16 | 记忆/技能 | `use_skill` 读一个 SKILL.md | 能读到（§7） |
+| 17 | 远程主机 | 容器 `~/.ssh/config` 里有 Host 别名时：`env_exec("hostname", target="ssh:<别名>")` | 远程主机名；报 `Could not resolve hostname` = 别名没写/不在容器里 |
 
 **任何一条不过，先别继续**：把「命令 + 原始 stdout/stderr」记下来，这就是你后面所有判断的基线。
 

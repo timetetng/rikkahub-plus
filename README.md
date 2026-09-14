@@ -20,7 +20,7 @@
 | **移除命理 / 排盘** | 工具层（`mingli` / `mingli_guide` 工具、14 份强制解读模板、系统提示里的排盘工作流）与**引擎层**（13 个 QuickJS 排盘引擎、约 20 个 Python 命理包、`offline_pkgs/` 全部轮子）一并删除；对应的 19 个 CI 步骤、Chaquopy 依赖、离线包缓存全部清掉 → 构建时间与 APK 体积同步下降 |
 | **移除硬编码提示词注入** | 中间层塞进系统提示的 `<tool_selection>` / `<work_ethic>` / `<mingli_workflow>` 三段全部删除，提示词回到「由助手卡片（system prompt）自己决定」 |
 | **永久停用更新检查** | 不再请求 `update.json`，抽屉里不会弹更新卡；版本策略改为「自己构建、自己安装」 |
-| **新增执行环境工具 `env_*`** | 7 个工具 + `target` 参数：**一套工具跑遍 droidspaces 容器 / 真机全局 / ZeroTermux**，路径按宿主视角写会自动翻译（见 §4）。2.5.0 引入容器版，2.6.0 通用化 |
+| **新增执行环境工具 `env_*`** | 7 个工具 + `target` 参数：**一套工具跑遍 droidspaces 容器 / 真机全局 / ZeroTermux / 远程 ssh 主机**，路径按宿主视角写会自动翻译（见 §4）。2.5.0 引入容器版，2.6.0 通用化，此后加 `ssh:<别名>` |
 | **仓库卫生** | 删除误入仓库的构建日志 zip、英文 README、死代码（`enableMingliTools`）、作者遗留的补丁脚本目录 `ci/` |
 
 ---
@@ -140,6 +140,7 @@ build-logic/    Gradle 约定插件
 | `ct:<名字>` | 指定的另一个 droidspaces 容器（裸容器名也认） |
 | `root` | 真机全局 mount ns（全部 `/data/user/0`、`/data/adb`、`/system`） |
 | `termux` | ZeroTermux |
+| `ssh:<别名>` | 远程主机（云服务器 / 家里机器…）：走**容器里**的 `ssh`，别名、密钥、端口、跳板全部取容器 root 的 `~/.ssh/config`，七个工具照常可用 |
 
 **路径按宿主视角写就行**：容器把宿主目录 bind 到 `/mnt/*`，工具会自动翻译并在结果里回显 `path_mapped`（例如 `/data/local/x → /mnt/hostlocal/x`），反向也认。
 
