@@ -20,7 +20,7 @@
 | **移除命理 / 排盘** | 工具层（`mingli` / `mingli_guide` 工具、14 份强制解读模板、系统提示里的排盘工作流）与**引擎层**（13 个 QuickJS 排盘引擎、约 20 个 Python 命理包、`offline_pkgs/` 全部轮子）一并删除；对应的 19 个 CI 步骤、Chaquopy 依赖、离线包缓存全部清掉 → 构建时间与 APK 体积同步下降 |
 | **移除硬编码提示词注入** | 中间层塞进系统提示的 `<tool_selection>` / `<work_ethic>` / `<mingli_workflow>` 三段全部删除，提示词回到「由助手卡片（system prompt）自己决定」 |
 | **永久停用更新检查** | 不再请求 `update.json`，抽屉里不会弹更新卡；版本策略改为「自己构建、自己安装」 |
-| **新增 droidspaces 容器桥接** | 7 个 `container_*` 工具，让 AI 能在本机 droidspaces 容器里执行命令、读写文件、跑后台长任务（见 §4） |
+| **新增执行环境工具 `env_*`** | 7 个工具 + `target` 参数：**一套工具跑遍 droidspaces 容器 / 真机全局 / ZeroTermux**，路径按宿主视角写会自动翻译（见 §4）。2.5.0 引入容器版，2.6.0 通用化 |
 | **仓库卫生** | 删除误入仓库的构建日志 zip、英文 README、死代码（`enableMingliTools`）、作者遗留的补丁脚本目录 `ci/` |
 
 ---
@@ -75,7 +75,7 @@
 | `search_*` | 18 种搜索后端：Brave / Bing / Exa / Tavily / SearXNG / Serper / Jina / Firecrawl / Perplexity / 智谱 / Bocha / Metaso / LinkUp / Ollama / Grok / Tinyfish / RikkaHub / 自定义 JS |
 | `workspace_*` | 工作区（proot 沙箱）读写与 shell |
 | `conversation_*` / `worker_*` / `teammate_*` / `send_message` | 跨会话与多智能体协作 |
-| **`container_*`（本分支新增）** | **droidspaces 容器桥接，见 §4** |
+| **`env_*`（本分支新增）** | **执行环境工具：容器 / 真机 / Termux，见 §4** |
 | MCP | 接入任意 MCP 服务器，工具自动并入工具表 |
 
 ### 2.6 文档与多媒体
@@ -177,7 +177,21 @@ build-logic/    Gradle 约定插件
 
 ---
 
-## 6. 构建
+## 6. 运行前提（换设备 / 换容器时要动的）
+
+这套东西**不是纯 APK 就能跑**——它依赖设备侧的三件套：
+
+| 组件 | 作用 | 备注 |
+|---|---|---|
+| **KernelSU(-Next) + `su`** | app 以 root 身份发起命令 | `su` 在 `/system/bin/su`，免密；本 app 需在 KSU 里授权 |
+| **droidspaces + 一个容器** | 真正干活的 Linux 环境 | 容器名可配（见 §4 的「默认环境」）；换容器只改这一个值 |
+| **设备侧执行器** `/data/local/exec-tool.sh`（+ `/data/local/ws`） | 把「su → droidspaces → 容器 shell」三层封成一个入口，顺带处理 mount ns 遮蔽 | **不在本仓库**，属设备运维脚本；容器名作为第 2 参数传入，所以换容器**不用改脚本** |
+
+换一个设备复刻时，需要按顺序确认：① KSU 授权 → ② `droidspaces show` 能看到容器 → ③ `/data/local/exec-tool.sh <mode> <容器名>` 能进容器 → ④ 助手卡片里把「默认环境」改成你的容器名。
+
+> 换个发行版的容器（例如 Kali 而非 Arch）时，只有**容器内**的包管理与服务管理要换（`apt` / `pacman`、systemd 有或没有）；`env_*` 工具与执行器本身与发行版无关。容器内没有 systemd 时，`env_bg` 的 systemd 路径不可用，改用「root/termux 那套 `setsid` + 日志」思路即可。
+
+## 7. 构建
 
 **CI**：push 到 `main` 自动触发 `.github/workflows/build.yml`（GitHub Actions），产物为 `app-arm64-v8a-release.apk`；`workflow_dispatch` 也可手动触发。
 
@@ -198,7 +212,7 @@ build-logic/    Gradle 约定插件
 
 ---
 
-## 7. 许可与致谢
+## 8. 许可与致谢
 
 - 本项目遵循 **AGPL-3.0**（见 [LICENSE](LICENSE)）
 - 基于 [RikkaHub](https://github.com/rikkahub/rikkahub)（作者 rerere）与 [rikkahub-plus](https://github.com/heikeyangle-code/rikkahub-plus) 的酒馆增强层二次开发
