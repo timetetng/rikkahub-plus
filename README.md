@@ -1,7 +1,7 @@
 # Rikka+ · RikkaHub Plus（自维护分支）
 
-> 跑在 Android 上的原生 LLM 聊天客户端（Kotlin + Jetpack Compose + Material You）。
-> **自 2026-09 起，本仓库（`timetetng/rikkahub-plus` 分支 `main`）完全由我们自己维护。**
+> 跑在 Android 上的原生 LLM 聊天客户端（Kotlin + Jetpack Compose + Material You），支持桥接 **DroidSpaces** 容器，强依赖自定义内核以及 KernelSU。
+> **免责声明：本仓库（`timetetng/rikkahub-plus` 分支 `main`）完全自用，不提供除此文档之外的教学、不确保在任何设备上能正常运行，可以让 agent 自行适配。**
 
 | | |
 |---|---|
