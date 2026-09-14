@@ -28,7 +28,7 @@ import me.rerere.ai.ui.UIMessagePart
  *   `root`      真机全局 mount ns（能看全部 /data/user/0、/data/adb、/system）
  *   `termux`    ZeroTermux
  *
- * 路径**按宿主视角写就行**：容器把宿主目录 bind 到 /mnt/*，工具会自动翻译，并在结果里回显
+ * 路径**按宿主视角写就行**：容器把宿主目录 bind 到 /mnt 下，工具会自动翻译，并在结果里回显
  * `path_mapped`（例如 `/data/local/x → /mnt/hostlocal/x`），反过来也认。
  *
  * 命令一律经执行器 /data/local/exec-tool.sh（命令体走 stdin，零转义）；本文件不做任何 mount。
