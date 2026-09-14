@@ -88,6 +88,10 @@ private fun parseTarget(raw: String): Target {
 private fun resolveTarget(arg: String?, cfgTarget: String): Target =
     parseTarget(arg?.trim().takeUnless { it.isNullOrEmpty() } ?: cfgTarget)
 
+private fun argvFor(t: Target): Array<String> =
+    if (t.isContainer) arrayOf("su", "-c", "$EXEC_TOOL arch ${t.container}")
+    else arrayOf("su", "-c", "$EXEC_TOOL ${t.mode}")
+
 /** 路径翻译：宿主视角 ⇄ 目标视角；返回 (最终路径, 说明) */
 private fun mapPath(t: Target, path: String): Pair<String, String?> {
     if (t.mode == "termux") return path to null   // termux 只能看 $PREFIX/HOME 与 /storage，不做映射
@@ -540,7 +544,7 @@ fun createEnvTools(
         name = "env_bg",
         description = """
             Start a LONG-RUNNING background job in a device environment. Containers: systemd unit /root/.wsjobs/<name>.sh.
-            root/termux: setsid + log file. `name` = A-Za-z0-9_.- . Jobs do NOT inherit the executor env ($GITHUB_TOKEN
+            root/termux: setsid + log file. `name` = A-Za-z0-9_.- . Jobs do NOT inherit the executor env (${'$'}GITHUB_TOKEN
             etc.). Read later with env_log.
         """.trimIndent().replace("\n", " "),
         needsApproval = { false },
