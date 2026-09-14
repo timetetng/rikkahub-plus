@@ -52,10 +52,9 @@ data class Assistant(
         LocalToolOption.AskUser,
         LocalToolOption.Clipboard,
     ),
-    // ── 容器桥接工具（方案 A：配置存助手 JSON，不动 DB）──
-    val containerMode: String = "arch",     // arch | root | termux
-    val containerName: String = "arch",     // droidspaces 容器名
-    val containerCwd: String = "/root",     // 默认工作目录（容器内绝对路径）
+    // ── 设备执行环境工具（env_*）：这里只配「默认值」，单次调用用 target 覆盖 ──
+    val envTarget: String = "arch",         // arch(=默认容器) | root | termux | ct:<容器名>
+    val envCwd: String = "/root",           // 默认工作目录（该环境视角的绝对路径）
     val enableWebSearch: Boolean = false, // 网络搜索开关(每个助手独立)
     val workspaceId: Uuid? = null,
     val background: String? = null, // 聊天页背景图地址(本地文件 URI 或网络 URL), 为 null 时无背景

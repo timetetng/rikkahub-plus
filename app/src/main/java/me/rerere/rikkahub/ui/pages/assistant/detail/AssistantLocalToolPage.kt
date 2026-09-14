@@ -381,8 +381,8 @@ private fun AssistantLocalToolContent(
         }
         CardGroup {
             item(
-                headlineContent = { Text("容器工具（droidspaces）") },
-                supportingContent = { Text("允许 AI 在本机 droidspaces 容器里执行命令、读写文件、跑后台长任务") },
+                headlineContent = { Text("执行环境工具") },
+                supportingContent = { Text("一套工具跑遍容器 / 真机 / Termux：执行命令、读写文件、跑后台任务；单次调用可用 target 切换环境") },
                 trailingContent = {
                     Switch(
                         checked = assistant.localTools.contains(LocalToolOption.ContainerTools),
@@ -391,26 +391,13 @@ private fun AssistantLocalToolContent(
                 }
             )
             item(
-                headlineContent = { Text("容器模式") },
-                supportingContent = { Text("arch = droidspaces 容器（默认）；root = 真机全局；termux = ZeroTermux") },
+                headlineContent = { Text("默认环境") },
+                supportingContent = { Text("arch = 默认 droidspaces 容器；root = 真机全局；termux；ct:容器名 = 指定容器。单次调用可覆盖") },
                 trailingContent = {
                     OutlinedTextField(
-                        value = assistant.containerMode,
-                        onValueChange = { onUpdate(assistant.copy(containerMode = it)) },
-                        modifier = Modifier.width(110.dp),
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        singleLine = true,
-                    )
-                }
-            )
-            item(
-                headlineContent = { Text("容器名") },
-                supportingContent = { Text("droidspaces 容器名，默认 arch") },
-                trailingContent = {
-                    OutlinedTextField(
-                        value = assistant.containerName,
-                        onValueChange = { onUpdate(assistant.copy(containerName = it)) },
-                        modifier = Modifier.width(110.dp),
+                        value = assistant.envTarget,
+                        onValueChange = { onUpdate(assistant.copy(envTarget = it)) },
+                        modifier = Modifier.width(120.dp),
                         textStyle = MaterialTheme.typography.bodyMedium,
                         singleLine = true,
                     )
@@ -418,11 +405,11 @@ private fun AssistantLocalToolContent(
             )
             item(
                 headlineContent = { Text("默认工作目录") },
-                supportingContent = { Text("容器内路径，默认 /root") },
+                supportingContent = { Text("该环境视角的绝对路径（容器默认 /root，root 默认 /）") },
                 trailingContent = {
                     OutlinedTextField(
-                        value = assistant.containerCwd,
-                        onValueChange = { onUpdate(assistant.copy(containerCwd = it)) },
+                        value = assistant.envCwd,
+                        onValueChange = { onUpdate(assistant.copy(envCwd = it)) },
                         modifier = Modifier.width(140.dp),
                         textStyle = MaterialTheme.typography.bodyMedium,
                         singleLine = true,

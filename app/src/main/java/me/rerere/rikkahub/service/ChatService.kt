@@ -78,7 +78,7 @@ import me.rerere.rikkahub.data.ai.tools.createShellTools
 import me.rerere.rikkahub.data.ai.tools.createPythonTool
 import me.rerere.rikkahub.data.ai.tools.createDatabaseQueryTool
 import me.rerere.rikkahub.data.ai.tools.createCalculatorTool
-import me.rerere.rikkahub.data.ai.tools.createContainerTools
+import me.rerere.rikkahub.data.ai.tools.createEnvTools
 import me.rerere.rikkahub.data.ai.tools.createWebFetchTool
 import me.rerere.rikkahub.data.ai.tools.createTaskTools
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
@@ -1126,11 +1126,10 @@ class ChatService(
                     }
                     if (assistant.localTools.contains(LocalToolOption.ContainerTools)) {
                         addAll(
-                            createContainerTools(
+                            createEnvTools(
                                 context,
-                                assistant.containerMode,
-                                assistant.containerName,
-                                assistant.containerCwd,
+                                assistant.envTarget,
+                                assistant.envCwd,
                                 assistant.toolExecTimeout,
                             )
                         )
@@ -1512,11 +1511,10 @@ class ChatService(
                 }
                 if (assistant.localTools.contains(LocalToolOption.ContainerTools)) {
                     addAll(
-                        createContainerTools(
+                        createEnvTools(
                             context,
-                            assistant.containerMode,
-                            assistant.containerName,
-                            assistant.containerCwd,
+                            assistant.envTarget,
+                            assistant.envCwd,
                             assistant.toolExecTimeout,
                         )
                     )

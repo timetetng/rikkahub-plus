@@ -109,7 +109,7 @@ class GenerationHandler(
         name.startsWith("present_file") -> "🔧 文件 → 正在分享..."
         name.startsWith("eval_javascript") -> "🔧 JS → 正在执行..."
         name.startsWith("memory_") -> "🔧 记忆 → 正在处理..."
-        name.startsWith("container_") -> "🔧 容器 → 正在执行..."
+        name.startsWith("env_") -> "🔧 环境 → 正在执行..."
             else -> "🔧 $name → 正在处理..."
     }
 
