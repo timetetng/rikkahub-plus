@@ -184,6 +184,9 @@ build-logic/    Gradle 约定插件
 - Python 环境：Chaquopy 3.12，依赖见 `app/build.gradle.kts` 的 `chaquopy.pip` 块
 - 需要 Android SDK（compileSdk 37 / minSdk 26）与 JDK 21
 
+**版本策略**：每次发版 `versionCode` **+1**；`versionName` 走语义化 `MAJOR.MINOR.PATCH`——功能变更 `MINOR`+1，修 bug `PATCH`+1。
+自 **`2.5.0`（code 175）** 起本分支独立计数，不再沿用中间层的 `2.4.6-clean` 后缀。
+
 ---
 
 ## 7. 许可与致谢
