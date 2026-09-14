@@ -123,7 +123,7 @@ env_log(name="pull", target="ssh:腾讯云")
 
 机制与前提：
 
-- ssh 客户端**在容器里**（宿主 Android 没有 ssh）→ 第一次调用若容器没起，会先起容器（~4s），之后走连接复用
+- ssh 客户端**在容器里**（宿主 Android 没有 ssh）→ 容器里得先有 `ssh`（Arch：`pacman -S openssh`；Debian/Kali：`apt install openssh-client`）。第一次调用若容器没起会先起容器（~4s），之后走连接复用
 - 别名 / 密钥 / 端口 / 跳板（`ProxyJump`）全部来自**容器 root 的 `~/.ssh/config`**；`IdentityFile` + `IdentitiesOnly yes` 最稳
 - 工具只做 `ssh -T <别名> -- bash -s`，脚本走 stdin → **零转义**（引号 / 反引号 / 内嵌 heredoc 都原样）
 - 已强制 `BatchMode=yes`（绝不会卡在密码提示）+ `ControlMaster/ControlPersist`：冷连 1.7~2.5s，复用后 ~0.15s
