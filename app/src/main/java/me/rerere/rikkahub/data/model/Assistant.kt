@@ -54,6 +54,10 @@ data class Assistant(
     ),
     // 命理工具总开关（mingli + mingli_guide），默认开启保持存量行为
     val enableMingliTools: Boolean = true,
+    // ── 容器桥接工具（方案 A：配置存助手 JSON，不动 DB）──
+    val containerMode: String = "arch",     // arch | root | termux
+    val containerName: String = "arch",     // droidspaces 容器名
+    val containerCwd: String = "/root",     // 默认工作目录（容器内绝对路径）
     val enableWebSearch: Boolean = false, // 网络搜索开关(每个助手独立)
     val workspaceId: Uuid? = null,
     val background: String? = null, // 聊天页背景图地址(本地文件 URI 或网络 URL), 为 null 时无背景

@@ -379,5 +379,56 @@ private fun AssistantLocalToolContent(
                 }
             )
         }
+        CardGroup {
+            item(
+                headlineContent = { Text("容器工具（droidspaces）") },
+                supportingContent = { Text("允许 AI 在本机 droidspaces 容器里执行命令、读写文件、跑后台长任务") },
+                trailingContent = {
+                    Switch(
+                        checked = assistant.localTools.contains(LocalToolOption.ContainerTools),
+                        onCheckedChange = { toggleLocalTool(LocalToolOption.ContainerTools, it) }
+                    )
+                }
+            )
+            item(
+                headlineContent = { Text("容器模式") },
+                supportingContent = { Text("arch = droidspaces 容器（默认）；root = 真机全局；termux = ZeroTermux") },
+                trailingContent = {
+                    OutlinedTextField(
+                        value = assistant.containerMode,
+                        onValueChange = { onUpdate(assistant.copy(containerMode = it)) },
+                        modifier = Modifier.width(110.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        singleLine = true,
+                    )
+                }
+            )
+            item(
+                headlineContent = { Text("容器名") },
+                supportingContent = { Text("droidspaces 容器名，默认 arch") },
+                trailingContent = {
+                    OutlinedTextField(
+                        value = assistant.containerName,
+                        onValueChange = { onUpdate(assistant.copy(containerName = it)) },
+                        modifier = Modifier.width(110.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        singleLine = true,
+                    )
+                }
+            )
+            item(
+                headlineContent = { Text("默认工作目录") },
+                supportingContent = { Text("容器内路径，默认 /root") },
+                trailingContent = {
+                    OutlinedTextField(
+                        value = assistant.containerCwd,
+                        onValueChange = { onUpdate(assistant.copy(containerCwd = it)) },
+                        modifier = Modifier.width(140.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        singleLine = true,
+                    )
+                }
+            )
+        }
     }
 }

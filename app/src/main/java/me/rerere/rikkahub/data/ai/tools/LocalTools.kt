@@ -119,6 +119,10 @@ sealed class LocalToolOption {
     @Serializable
     @SerialName("calendar")
     data object Calendar : LocalToolOption()
+
+    @Serializable
+    @SerialName("container_tools")
+    data object ContainerTools : LocalToolOption()
 }
 
 class LocalTools(

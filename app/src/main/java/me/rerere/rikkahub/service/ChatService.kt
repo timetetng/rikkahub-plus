@@ -78,6 +78,7 @@ import me.rerere.rikkahub.data.ai.tools.createShellTools
 import me.rerere.rikkahub.data.ai.tools.createPythonTool
 import me.rerere.rikkahub.data.ai.tools.createDatabaseQueryTool
 import me.rerere.rikkahub.data.ai.tools.createCalculatorTool
+import me.rerere.rikkahub.data.ai.tools.createContainerTools
 import me.rerere.rikkahub.data.ai.tools.createWebFetchTool
 import me.rerere.rikkahub.data.ai.tools.createTaskTools
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
@@ -1123,6 +1124,17 @@ class ChatService(
                     if (assistant.localTools.contains(LocalToolOption.PythonEngine)) {
                         add(createPythonTool(context, assistant.toolExecTimeout))
                     }
+                    if (assistant.localTools.contains(LocalToolOption.ContainerTools)) {
+                        addAll(
+                            createContainerTools(
+                                context,
+                                assistant.containerMode,
+                                assistant.containerName,
+                                assistant.containerCwd,
+                                assistant.toolExecTimeout,
+                            )
+                        )
+                    }
                     if (assistant.localTools.contains(LocalToolOption.DatabaseQuery)) {
                         add(createDatabaseQueryTool(database))
                     }
@@ -1497,6 +1509,17 @@ class ChatService(
                 addAll(localTools.getTools(assistant.localTools))
                 if (assistant.localTools.contains(LocalToolOption.ShellTools)) {
                     addAll(createShellTools())
+                }
+                if (assistant.localTools.contains(LocalToolOption.ContainerTools)) {
+                    addAll(
+                        createContainerTools(
+                            context,
+                            assistant.containerMode,
+                            assistant.containerName,
+                            assistant.containerCwd,
+                            assistant.toolExecTimeout,
+                        )
+                    )
                 }
                 if (assistant.localTools.contains(LocalToolOption.DatabaseQuery)) {
                     add(createDatabaseQueryTool(database))
