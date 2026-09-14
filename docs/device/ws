@@ -1,0 +1,144 @@
+#!/system/bin/sh
+# 这是 /data/local/ws 的可移植副本（容器文件/命令助手）。换容器用 WS_NAME=<名字> 或改下面的 NAME 默认值。
+# ws — Droidspaces 容器「文件/命令」助手  (v5, 2026-09-12)
+#
+# 用法:  su -c '/data/local/ws <子命令> [参数...]'
+#
+#  读: cat <p> [起] [止] | head <p> [n] | tail <p> [n] | ls|ll [p] | tree <p> [深]
+#      find <p> <名字> | grep <模式> <p> | stat <p> | du <p>
+#  写: w <p>（stdin 覆盖）| a <p>（stdin 追加）| mkdir <p> | rm <p>
+#      cp <a> <b> | mv <a> <b> | chmod <模式> <p>
+#  跑: run <命令...> | sh（交互）| df | pkg <pacman 参数...>
+#  长任务: bg <名字>（stdin 脚本 → systemd-run）| log <名字> [n] | jobs | rmjob <名字>
+#  容器: start | stop | restart | st（状态）| dlog [n]（容器日志，bind 失败只在这儿报）
+#  杂: help
+#
+# 路径: 一律按「容器内路径」。手机共享存储在容器里是 /storage/emulated/0。
+# 实现: 经 `droidspaces --name=<NAME> run <argv>` → 语义与容器内一致，不依赖 proot。
+# ★ 容器没运行会自动拉起；w/a/bg 会先把 stdin 收进临时文件，避免被"启动容器"吃掉。
+# 环境变量: WS_NAME 换容器名（默认 arch）
+
+DS=/data/local/Droidspaces/bin/droidspaces
+PIDF=/data/local/Droidspaces/Pids
+LOG=/data/local/tmp/ws-start.log
+DLOG=/data/local/Droidspaces/Logs
+NAME=${WS_NAME:-arch}
+JOB=/root/.wsjobs
+
+usage(){
+cat <<'U'
+ws — Droidspaces 容器文件/命令助手 (v5)
+ 读: cat <p> [起] [止] | head <p> [n] | tail <p> [n] | ls [p] | ll [p] | tree <p> [深]
+     find <p> <名字> | grep <模式> <p> | stat <p> | du <p>
+ 写: w <p> | a <p> | mkdir <p> | rm <p> | cp <a> <b> | mv <a> <b> | chmod <模式> <p>
+ 跑: run <命令...> | sh | df | pkg <pacman 参数...>
+ 长: (脚本) | ws bg <名字>   → systemd-run 后台跑，容器内 /root/.wsjobs/<名字>.sh
+     ws log <名字> [n] | ws jobs | ws rmjob <名字>
+ 容器: start | stop | restart | st | dlog [n]
+ 杂: help
+路径一律容器内路径；共享存储 = /storage/emulated/0；换容器 WS_NAME=xxx；容器没跑会自动拉起
+U
+exit 0
+}
+
+need(){ [ -x "$DS" ] || { echo "ws: 找不到 $DS" >&2; exit 4; }; }
+
+alive(){
+  p=$(cat "$PIDF/$NAME.pid" 2>/dev/null)
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null
+}
+
+ensure(){
+  alive && return 0
+  echo "ws: 容器 $NAME 未运行，正在启动..." >&2
+  need
+  "$DS" --name="$NAME" start </dev/null >"$LOG" 2>&1 || {
+    echo "ws: 启动失败：" >&2; tail -5 "$LOG" >&2; exit 5; }
+  i=0
+  while [ $i -lt 25 ]; do
+    if alive; then sleep 3; echo "ws: 已启动" >&2; return 0; fi
+    i=$((i+1)); sleep 1
+  done
+  echo "ws: 启动超时" >&2; exit 5
+}
+
+drun(){ need; ensure; exec "$DS" --name="$NAME" run "$@"; }
+
+# 把 stdin 落盘后再送进容器（顺序：先收 stdin，再 ensure）
+wfile(){ # $1=路径 $2=> 或 >>  （base64 走 argv，不依赖 stdin 转发）
+  need
+  B=$(base64 -w0)
+  [ -n "$B" ] || { echo "ws: 警告: stdin 为空" >&2; }
+  ensure
+  S='mkdir -p "$(dirname "$2")" && echo "$1" | base64 -d OP "$2"'
+  if [ "$2" = ">>" ]; then S=$(printf %s "$S" | sed "s|OP|>>|"); else S=$(printf %s "$S" | sed "s|OP|>|"); fi
+  "$DS" --name="$NAME" run sh -c "$S" sh "$B" "$1"
+  rc=$?
+  echo "ws: 已写入 $1 （$(printf %s "$B" | wc -c) bytes(base64), rc=$rc）" >&2
+  return $rc
+}
+
+# 长任务：脚本落容器 /root/.wsjobs/<名字>.sh，交给容器 systemd-run 跑
+# 宿主 execute_command 有 30s 硬超时，apt/pacman/docker pull 之类一律走这里
+bgjob(){ # $1=名字
+  case "$1" in
+    *[!A-Za-z0-9_.-]*|'') echo "ws: 名字只能含 A-Za-z0-9_.- 且非空" >&2; exit 2 ;;
+  esac
+  need
+  B=$(base64 -w0)
+  [ -n "$B" ] || { echo "ws: 警告: stdin 为空（还是收完脚本再跑吧）" >&2; exit 2; }
+  ensure
+  U="ws-$1"
+  S='mkdir -p '"$JOB"' && echo "$1" | base64 -d > "'"$JOB"'/$2.sh" && systemd-run --unit="$2" --collect --quiet /bin/sh "'"$JOB"'/$2.sh" && echo "→ 后台跑着：ws log ${2#ws-}"'
+  "$DS" --name="$NAME" run sh -c "$S" ws "$B" "$U"
+}
+
+cmd="$1"; shift 2>/dev/null
+
+case "$cmd" in
+  ""|-h|--help|help) usage ;;
+
+  start)   need; ensure; echo "ws: $NAME 运行中" >&2 ;;
+  stop)    need; "$DS" --name="$NAME" stop 2>&1 | tail -3 ;;
+  restart) need; "$DS" --name="$NAME" restart 2>&1 | tail -3 ;;
+  st)      need; "$DS" --name="$NAME" info 2>&1 | head -16; exit 0 ;;
+  dlog)    need; f="$DLOG/$NAME/log"; [ -f "$f" ] || { echo "ws: 没有 $f" >&2; exit 3; }
+           tail -n "${1:-40}" "$f" ;;
+
+  run) [ $# -gt 0 ] || { echo "用法: ws run <命令...>" >&2; exit 2; }; drun "$@" ;;
+  sh)  need; ensure; exec "$DS" --name="$NAME" enter ;;
+  df)  drun df -h ;;
+  pkg) [ $# -gt 0 ] || { echo "用法: ws pkg -S <包名>" >&2; exit 2; }; drun pacman "$@" ;;
+
+  bg)  [ -n "$1" ] || { echo "用法: (脚本) | ws bg <名字>" >&2; exit 2; }; bgjob "$1" ;;
+  log) [ -n "$1" ] || { echo "用法: ws log <名字> [行数]" >&2; exit 2; }
+       u="ws-$1"; case "$1" in ws-*) u="$1" ;; esac
+       drun sh -c 'systemctl is-active "$1"; journalctl -u "$1" --no-pager -o cat | tail -n "$2"' x "$u" "${2:-60}" ;;
+  jobs) drun sh -c 'systemctl list-units --type=service --all --no-legend "ws-*" 2>/dev/null; echo "--- 脚本 ---"; ls -1 /root/.wsjobs 2>/dev/null' ;;
+  rmjob) [ -n "$1" ] || { echo "用法: ws rmjob <名字>" >&2; exit 2; }
+       u="ws-$1"; case "$1" in ws-*) u="$1" ;; esac
+       drun sh -c 'systemctl stop "$1" 2>/dev/null; systemctl reset-failed "$1" 2>/dev/null; rm -f "/root/.wsjobs/$1.sh"; echo "ws: 已清 $1"' x "$u" ;;
+
+  cat)
+    [ -n "$1" ] || { echo "用法: ws cat <路径> [起始行] [结束行]" >&2; exit 2; }
+    drun sed -n "${2:-1},${3:-200}p" "$1" ;;
+  head) [ -n "$1" ] || exit 2; drun head -n "${2:-40}" "$1" ;;
+  tail) [ -n "$1" ] || exit 2; drun tail -n "${2:-40}" "$1" ;;
+  ls)   drun ls -1 "$1" ;;
+  ll)   drun ls -la "$1" ;;
+  tree) drun find "$1" -maxdepth "${2:-2}" ;;
+  find) [ -n "$2" ] || exit 2; drun find "$1" -name "$2" ;;
+  grep) [ -n "$2" ] || exit 2; drun grep -n -- "$1" "$2" ;;
+  stat) [ -n "$1" ] || exit 2; drun ls -ld "$1" ;;
+  du)   drun du -sh "$1" ;;
+
+  w) [ -n "$1" ] || { echo "用法: (内容) | ws w <路径>" >&2; exit 2; }; wfile "$1" ">" ;;
+  a) [ -n "$1" ] || exit 2; wfile "$1" ">>" ;;
+  mkdir) [ -n "$1" ] || exit 2; drun mkdir -p "$1" ;;
+  rm)    [ -n "$1" ] || exit 2; drun rm -rf "$1" ;;
+  cp|mv) [ -n "$2" ] || { echo "用法: ws $cmd <源> <目标>" >&2; exit 2; }
+     if [ "$cmd" = "cp" ]; then drun cp -a "$1" "$2"; else drun mv "$1" "$2"; fi ;;
+  chmod) [ -n "$2" ] || exit 2; drun chmod "$1" "$2" ;;
+
+  *) echo "ws: 未知子命令 [$cmd]（ws help）" >&2; exit 2 ;;
+esac

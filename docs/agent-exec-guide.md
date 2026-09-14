@@ -9,6 +9,28 @@
 
 ---
 
+## 🚀 自举四件套（只要这几条直链，就能把整套环境装齐）
+
+| 要什么 | 直链 |
+|---|---|
+| **本文档** | `https://raw.githubusercontent.com/timetetng/rikkahub-plus/main/docs/agent-exec-guide.md` |
+| **执行器** `exec-tool.sh` | `https://raw.githubusercontent.com/timetetng/rikkahub-plus/main/docs/device/exec-tool.sh` |
+| **容器助手** `ws` | `https://raw.githubusercontent.com/timetetng/rikkahub-plus/main/docs/device/ws` |
+| **APK（最新 Release）** | `https://github.com/timetetng/rikkahub-plus/releases/latest` |
+
+> **拉不动 raw 时**（国内网络常超时）：把上面那整串 URL 当参数，换成下面任一前缀，内容完全一样 ——
+> - `https://gh-proxy.com/https://raw.githubusercontent.com/...`
+> - `https://ghproxy.net/https://raw.githubusercontent.com/...`
+>
+> 或走 API（公开仓库，无需 token）：
+> ```sh
+> curl -fsSL -H 'Accept: application/vnd.github.raw' \
+>   https://api.github.com/repos/timetetng/rikkahub-plus/contents/docs/agent-exec-guide.md
+> ```
+> 想要**钉住版本**（不受 main 后续变动影响）：把 URL 里的 `main` 换成 tag，例如 `v2.6.0`。
+
+---
+
 ## 0. 先搞清楚你在哪一层
 
 你（agent）跑在 **rikkahub 这个 Android app 的进程里**（untrusted_app 域、无 root、被 SELinux 与 scoped storage 限制）。
@@ -104,28 +126,30 @@ CMD_EOF
 
 **什么时候用它而不是 §2**：① 装机后还没打开工具开关时 ② 要用 `ws` 的专属子命令（`dlog` 看容器运行时日志、`st`、`pkg`、`rmjob`）③ 排查「工具本身是不是好的」——两条路对比着跑，能立刻区分是工具的问题还是环境的问题。
 
-### 3.1 设备上必须先有的文件
+### 3.1 把两个脚本装到设备（自举）
 
-| 文件 | 作用 |
-|---|---|
-| `/data/local/exec-tool.sh` | 执行器本体（**必需**，§2 和 §3 都依赖它） |
-| `/data/local/ws` | 容器文件/命令助手 + 后台任务（`bg`/`log`/`jobs`/`dlog`），**强烈建议** |
-
-**没有就装**（本交接目录里带了这两个脚本，与我们的设备同源）：
+设备上必须先有 `/data/local/exec-tool.sh`（§2 和 §3 都依赖它）和 `/data/local/ws`。**没有就按直链拉**：
 
 ```sh
-su -c '/data/local/exec-tool.sh root' <<'CMD_EOF'
-# 脚本先放到 /storage/emulated/0 下某处（例如 Download），再：
-cp /storage/emulated/0/Download/exec-tool.sh /data/local/exec-tool.sh
-cp /storage/emulated/0/Download/ws            /data/local/ws
-chmod 755 /data/local/exec-tool.sh /data/local/ws
-sed -i 's/^CONTAINER=.*/CONTAINER=kali/' /data/local/exec-tool.sh   # 改成你的容器名
+# ① 先下到共享存储（用你的 fetch 工具、或容器里的 curl 都行）
+curl -fsSL -o /storage/emulated/0/Download/exec-tool.sh https://raw.githubusercontent.com/timetetng/rikkahub-plus/main/docs/device/exec-tool.sh
+curl -fsSL -o /storage/emulated/0/Download/ws            https://raw.githubusercontent.com/timetetng/rikkahub-plus/main/docs/device/ws
+
+# ② 落到 /data/local —— 此刻执行器可能还不存在，所以这一步用「裸 su」而不是执行器
+su -c 'cp /storage/emulated/0/Download/exec-tool.sh /data/local/exec-tool.sh; \
+       cp /storage/emulated/0/Download/ws /data/local/ws; \
+       chmod 755 /data/local/exec-tool.sh /data/local/ws; \
+       sed -i "s/^CONTAINER=.*/CONTAINER=kali/" /data/local/exec-tool.sh'
+
+# ③ 验证（把 kali 换成你的容器名）
+su -c '/data/local/exec-tool.sh arch kali' <<'CMD_EOF'
+id; hostname; head -1 /etc/os-release
 CMD_EOF
 ```
 
-> 冷启动顺序：先把脚本放上去（用 `su -c` + `cp` 这种不需要执行器的写法），再开始用执行器。
-
----
+- `su -c` 需要 app 已在 KernelSU 里授权 root；第一次会弹授权框（人类点允许）
+- 换容器不用改脚本：`exec-tool.sh arch <容器名>`；`ws` 用 `WS_NAME=<容器名> ws …`
+- 本仓库里的两份是**可移植副本**，设备上那份才是运行中的；改了就同步（`docs/device/` ↔ `/data/local/`）
 
 ## 4. 自检清单（装完照着跑，逐条打勾，结果写进你的记忆）
 
@@ -279,19 +303,17 @@ memories/tasks.md      ← 只放**未结束**的任务（办完就删）
 
 ---
 
-## 8. 交接清单
+## 8. 交接清单（全部可用直链获取）
 
-| 项 | 说明 |
-|---|---|
-| **最新 APK** | 覆盖安装即可（同签名，保数据）；装完按 §1.3 打开工具并填**默认环境 = 你的容器名** |
-| `exec-tool.sh` | 设备侧执行器 → `/data/local/`，`chmod 755`，`CONTAINER=` 改成你的容器名 |
-| `ws` | 容器助手（`bg`/`log`/`jobs`/`dlog`/`df`）→ `/data/local/` |
-| 本文档 | 读一遍 + 按 §4 自检（16 条） |
-| 一套记忆/技能 | 按 §7 建，把自检结果写进去 |
+| 项 | 怎么拿 | 说明 |
+|---|---|---|
+| **最新 APK** | `https://github.com/timetetng/rikkahub-plus/releases/latest` | 覆盖安装即可（同签名，保数据）；装完按 §1.3 打开工具并把**默认环境**填成你的容器名 |
+| `exec-tool.sh` | 见顶部「自举四件套」直链 | 装到 `/data/local/`，`chmod 755`，`CONTAINER=` 改成你的容器名 |
+| `ws` | 同上 | 装到 `/data/local/`，容器助手（`bg`/`log`/`jobs`/`dlog`/`df`） |
+| 本文档 | 同上 | 读一遍 + 按 §4 自检（16 条） |
+| 一套记忆/技能 | 自己按 §7 建 | 把自检结果写进去 |
 
 **最后一条建议**：先把 §4 自检跑完、把原始输出存进记忆，再动手改任何东西。你后面所有判断都建立在那份基线上。
-
----
 
 ## 附录 A：万一你手上是**旧包**（无 `env_*` 工具）
 
