@@ -113,9 +113,15 @@ private fun b64(s: String): String =
 private fun b64decode(s: String): String =
     String(Base64.decode(s.replace(Regex("\\s"), ""), Base64.DEFAULT), Charsets.UTF_8)
 
-private fun trimOutput(s: String): String =
-    if (s.length <= MAX_OUTPUT_CHARS) s
-    else s.take(MAX_OUTPUT_CHARS) + "\n...[truncated; original ${s.length} chars]"
+/** 去掉 ANSI 转义（droidspaces 出错时会给 stderr 上色，白占 token） */
+private fun stripAnsi(s: String): String =
+    s.replace(Regex("\u001B\\[[0-9;]*[A-Za-z]"), "")
+
+private fun trimOutput(s: String): String {
+    val t = stripAnsi(s)
+    return if (t.length <= MAX_OUTPUT_CHARS) t
+    else t.take(MAX_OUTPUT_CHARS) + "\n...[truncated; original ${t.length} chars]"
+}
 
 private suspend fun runProcess(argv: Array<String>, stdin: String?, timeoutSec: Long): ExecResult {
     val process = try {
