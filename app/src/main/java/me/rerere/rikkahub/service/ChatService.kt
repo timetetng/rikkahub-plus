@@ -81,8 +81,6 @@ import me.rerere.rikkahub.data.ai.tools.createCalculatorTool
 import me.rerere.rikkahub.data.ai.tools.createWebFetchTool
 import me.rerere.rikkahub.data.ai.tools.createTaskTools
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
-import me.rerere.rikkahub.data.ai.tools.local.createMingliTool
-import me.rerere.rikkahub.data.ai.tools.local.createMingliGuideTool
 import me.rerere.rikkahub.data.files.SkillManager
 import me.rerere.rikkahub.data.ai.transformers.Base64ImageToLocalFileTransformer
 import me.rerere.rikkahub.data.ai.transformers.DocumentAsPromptTransformer
@@ -1124,11 +1122,6 @@ class ChatService(
                     }
                     if (assistant.localTools.contains(LocalToolOption.PythonEngine)) {
                         add(createPythonTool(context, assistant.toolExecTimeout))
-                    }
-                    // 命理工具: 一个开关控制两个工具（mingli + mingli_guide）
-                    if (assistant.enableMingliTools) {
-                        add(createMingliTool(context))
-                        add(createMingliGuideTool(context))
                     }
                     if (assistant.localTools.contains(LocalToolOption.DatabaseQuery)) {
                         add(createDatabaseQueryTool(database))
