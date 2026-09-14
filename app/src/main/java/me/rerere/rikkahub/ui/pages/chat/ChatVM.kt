@@ -174,12 +174,9 @@ class ChatVM(
         }
     }
 
-    // Update checker
+    // Update checker —— 已停用（自建分支：不跟随任何上游/作者发布，见 memories/rikkahub.md）
     val updateState = settingsStore.settingsFlow
-        .map { settings ->
-            !settings.init &&
-                settings.displaySetting.updateCheckDisabledUntilEpochMillis <= System.currentTimeMillis()
-        }
+        .map { false }
         .distinctUntilChanged()
         .flatMapLatest { enabled ->
             if (enabled) updateChecker.checkUpdate() else flowOf(UiState.Loading)
