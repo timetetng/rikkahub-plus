@@ -3,6 +3,10 @@ name: Build APK
 on:
   push:
     branches: [ main ]
+    paths-ignore:            # 纯文档改动不值得跑 16 分钟构建
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
   workflow_dispatch:
 
 jobs:
