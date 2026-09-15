@@ -54,6 +54,10 @@ private const val MAX_READ_BYTES = 2L * 1024 * 1024
 private const val MAX_WRITE_BYTES = 2 * 1024 * 1024
 private const val MAX_TIMEOUT_SEC = 600L
 private const val MAX_OUTPUT_CHARS = 120_000
+private const val MAX_OUTPUT_LINES = 2000
+
+/** 输出超限时完整落盘的地方（容器/root 侧都读得到；读回来用 env_read_file） */
+private const val SPILL_DIR = "/data/user/0/me.rerere.rikkahub/cache/rh-exec"
 private const val EXEC_POLL_MS = 200L
 private const val MAX_FILE_READ = 512 * 1024
 
@@ -188,10 +192,42 @@ private fun b64decode(s: String): String =
 private fun stripAnsi(s: String): String =
     s.replace(Regex("\u001B\\[[0-9;]*[A-Za-z]"), "")
 
+/**
+ * 输出收尾：**留尾部** + 行数/字符双限。
+ * 旧实现是 take(前 N 字符) —— 中文场景下正好把结尾的报错砍掉、留下满屏滚动日志，
+ * 方向反了。抄 pi-mono bash 的 capture：「留尾 + 明说砍了多少」。
+ */
 private fun trimOutput(s: String): String {
     val t = stripAnsi(s)
-    return if (t.length <= MAX_OUTPUT_CHARS) t
-    else t.take(MAX_OUTPUT_CHARS) + "\n...[truncated; original ${t.length} chars]"
+    if (t.isEmpty()) return t
+    val lines = t.split('\n')
+    var start = lines.size
+    var chars = 0
+    while (start > 0 && lines.size - start < MAX_OUTPUT_LINES) {
+        val next = chars + lines[start - 1].length + 1
+        if (next > MAX_OUTPUT_CHARS) break
+        chars = next
+        start--
+    }
+    if (start == 0) return t
+    val kept = lines.subList(start, lines.size).joinToString("\n")
+    return "[... ${start} lines / ${t.length - chars} chars omitted — full output goes to the spill file when it is oversized ...]\n$kept"
+}
+
+/**
+ * 输出太大时把完整内容从临时文件复制到 spill 目录 —— 进程一退，temp 文件就删了。
+ * 抄 pi-mono bash 的 capture.spill：截断不能等于「信息消失」。
+ */
+private fun spillIfNeeded(f: File, tag: String): String? {
+    if (!f.exists() || f.length() <= MAX_FILE_READ) return null
+    return runCatching {
+        val dir = File(SPILL_DIR).apply { mkdirs() }
+        val cutoff = System.currentTimeMillis() - 24L * 3600 * 1000
+        dir.listFiles()?.forEach { old -> if (old.lastModified() < cutoff) old.delete() }
+        val dest = File(dir, "$tag-${System.currentTimeMillis()}.log")
+        f.copyTo(dest, overwrite = true)
+        dest.absolutePath
+    }.getOrNull()
 }
 
 /** 前台执行的结果：要么跑完，要么超时（超时不一定要杀 —— exec 会把它转成后台任务接着跑）。 */
@@ -283,8 +319,10 @@ private suspend fun runProcess(argv: Array<String>, stdin: String?, timeoutSec: 
             delay(EXEC_POLL_MS)
         }
         val code = runCatching { process.exitValue() }.getOrDefault(-1)
-        val out = readFileCapped(outFile)
-        val err = readFileCapped(errFile)
+        val outSpill = spillIfNeeded(outFile, "stdout")
+        val errSpill = spillIfNeeded(errFile, "stderr")
+        val out = readFileCapped(outFile) + (outSpill?.let { "\n[output truncated; full log: $it]" } ?: "")
+        val err = readFileCapped(errFile) + (errSpill?.let { "\n[output truncated; full log: $it]" } ?: "")
         cleanupFiles(outFile, errFile, inFile)
         return ExecOutcome.Done(ExecResult(code, out, err))
     } catch (e: CancellationException) {
@@ -722,12 +760,24 @@ fun createEnvTools(
                         put("type", "boolean")
                         put("description", "Replace every occurrence (default false = single, errors out if not unique)")
                     })
+
+                    put("edits", buildJsonObject {
+                        put("type", "array")
+                        put("description", "Several non-overlapping replacements applied to the ORIGINAL file in ONE call — prefer this over firing two env_edit_file calls in parallel (both read the same snapshot and one clobbers the other). Each item: {old_string, new_string}. Each old_string must match uniquely and must not overlap the others.")
+                        put("items", buildJsonObject {
+                            put("type", "object")
+                            put("properties", buildJsonObject {
+                                put("old_string", buildJsonObject { put("type", "string") })
+                                put("new_string", buildJsonObject { put("type", "string") })
+                            })
+                        })
+                    })
                     put("target", buildJsonObject {
                         put("type", "string")
                         put("description", TARGET_DESC)
                     })
                 },
-                required = listOf("path", "old_string", "new_string"),
+                required = listOf("path"),
             )
         },
         execute = { args ->
@@ -735,39 +785,29 @@ fun createEnvTools(
             val pathArg = args.jsonObject["path"]?.jsonPrimitive?.contentOrNull
                 ?.takeIf { it.isNotBlank() }
                 ?: error("env_edit_file: 'path' is required")
-            val oldString = args.jsonObject["old_string"]?.jsonPrimitive?.contentOrNull
-                ?: error("env_edit_file: 'old_string' is required")
-            val newString = args.jsonObject["new_string"]?.jsonPrimitive?.contentOrNull
-                ?: error("env_edit_file: 'new_string' is required")
-            if (oldString.isEmpty()) error("env_edit_file: 'old_string' must not be empty")
+            val edits = parseTextEdits(args.jsonObject)
             val replaceAll = args.jsonObject["replace_all"]?.jsonPrimitive?.contentOrNull?.toBoolean() ?: false
+            if (replaceAll && edits.size > 1) {
+                error("env_edit_file: replace_all applies only to the single old_string/new_string form; use edits[] for several changes")
+            }
             val (path, mappedNote) = mapPath(t, pathArg)
 
+            var bytesIn = 0
             var written = 0L
-            withPathLock(t, path) {
+            val result = withPathLock(t, path) {
                 val (_, text) = readRaw(t, path, defTimeout)   // path 已翻译过，mapPath 不会再动它
-                val cnt = countOccurrences(text, oldString)
-                if (cnt == 0) error("env_edit_file: old_string not found in ${t.label}:$path")
-                if (cnt > 1 && !replaceAll) {
-                    error("env_edit_file: old_string occurs $cnt times in ${t.label}:$path; set replace_all=true or add more context")
-                }
-                val lines = ArrayList<Int>()
-                var i = text.indexOf(oldString)
-                while (i >= 0) {
-                    lines.add(text.substring(0, i).count { c -> c == '\n' } + 1)
-                    if (!replaceAll) break
-                    i = text.indexOf(oldString, i + oldString.length)
-                }
-                val newText = if (replaceAll) text.replace(oldString, newString) else text.replaceFirst(oldString, newString)
-                written = writeRaw(t, path, newText, defTimeout).first
+                bytesIn = text.toByteArray(Charsets.UTF_8).size
+                val r = applyTextEdits(text, edits, replaceAll)
+                written = writeRaw(t, path, r.text, defTimeout).first
+                r
             }
             val payload = buildJsonObject {
                 put("target", t.label)
                 put("path", path)
                 if (mappedNote != null) put("path_mapped", mappedNote)
-                put("replacements", JsonPrimitive(lines.size))
-                put("lines", kotlinx.serialization.json.JsonArray(lines.map { JsonPrimitive(it) }))
-                put("bytes_before", JsonPrimitive(text.toByteArray(Charsets.UTF_8).size))
+                put("replacements", JsonPrimitive(result.count))
+                put("lines", kotlinx.serialization.json.JsonArray(result.lines.map { JsonPrimitive(it) }))
+                put("bytes_before", JsonPrimitive(bytesIn))
                 put("bytes_after", JsonPrimitive(written))
             }
             listOf(UIMessagePart.Text(payload.toString()))

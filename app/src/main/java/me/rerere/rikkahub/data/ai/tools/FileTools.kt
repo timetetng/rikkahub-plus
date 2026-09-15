@@ -81,6 +81,7 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                 appendLine("- source/destination: Source and dest paths (copy, move)")
                 appendLine("- content: Text content to write (write)")
                 appendLine("- old_string/new_string/replace_all: Find-and-replace (patch)")
+                appendLine("- edits: array of {old_string,new_string} — several non-overlapping changes in ONE call; use this instead of two parallel patches")
                 appendLine("- offset/limit: Line range for paginated read (read)")
                 appendLine("- dir: Directory to list (list, default: ${defaultDir})")
                 appendLine("- mode/pattern/root: Search parameters (search)")
@@ -157,6 +158,18 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                             put("type", "boolean")
                             put("description", "Replace all occurrences instead of requiring unique match. Used by: patch (default: false)")
                         })
+
+                        put("edits", buildJsonObject {
+                            put("type", "array")
+                            put("description", "Several non-overlapping replacements applied to the ORIGINAL file in ONE call — prefer this over firing two patches in parallel (both read the same snapshot and one clobbers the other). Each item: {old_string, new_string}. Each old_string must match uniquely and must not overlap the others; merge nearby changes into a single item. When present, old_string/new_string are ignored.")
+                            put("items", buildJsonObject {
+                                put("type", "object")
+                                put("properties", buildJsonObject {
+                                    put("old_string", buildJsonObject { put("type", "string") })
+                                    put("new_string", buildJsonObject { put("type", "string") })
+                                })
+                            })
+                        })
                         put("type_filter", buildJsonObject {
                             put("type", "string")
                             put("enum", buildJsonArray { add("all"); add("file"); add("dir") })
@@ -196,23 +209,9 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                             }?.joinToString("\n") ?: "(empty)"
                             listOf(UIMessagePart.Text("[${file.absolutePath}] 目录内容:\n$listing"))
                         } else {
-                            if (file.length() > 5 * 1024 * 1024) error("文件超过 5MB，为防止内存溢出无法读取: $path")
                             val offset = obj["offset"]?.jsonPrimitive?.intOrNull ?: 1
-                            val limit = obj["limit"]?.jsonPrimitive?.intOrNull ?: 2000
-                            val lines = file.readLines()
-                            val totalLines = lines.size
-                            val startIdx = (offset - 1).coerceIn(0, totalLines - 1)
-                            val endIdx = (startIdx + limit).coerceAtMost(totalLines)
-                            val selected = lines.subList(startIdx, endIdx)
-                            val result = buildString {
-                                selected.forEachIndexed { idx, line ->
-                                    appendLine("${startIdx + idx + 1}|$line")
-                                }
-                                if (endIdx < totalLines) {
-                                    appendLine("... (${totalLines - endIdx} more lines, total $totalLines)")
-                                }
-                            }
-                            listOf(UIMessagePart.Text(result))
+                            val limit = obj["limit"]?.jsonPrimitive?.intOrNull ?: READ_MAX_LINES
+                            listOf(UIMessagePart.Text(readFileWindow(file, offset, limit)))
                         }
                     }
                     "write" -> {
@@ -295,62 +294,20 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                     }
                     "patch" -> {
                         val path = obj["path"]?.jsonPrimitive?.content ?: error("path required")
-                        val oldText = obj["old_string"]?.jsonPrimitive?.content ?: error("old_string required")
-                        val newText = obj["new_string"]?.jsonPrimitive?.content ?: ""
                         val replaceAll = obj["replace_all"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+                        val edits = parseTextEdits(obj)
+                        if (replaceAll && edits.size > 1) {
+                            error("replace_all applies only to the single old_string/new_string form; use edits[] for several changes")
+                        }
                         val file = resolveFile(path)
                         if (!file.exists()) error("File not found: $path")
-                        withFileLock(file) {
-                            val content = file.readText()
-
-                            // 1. Exact match
-                            val count = content.windowedSequence(oldText.length).count { it == oldText }
-                            if (count > 0) {
-                                if (count > 1 && !replaceAll) error("Found $count matches — set replace_all=true or make old_string more specific")
-                                val updated = if (replaceAll) content.replace(oldText, newText)
-                                else content.replaceFirst(oldText, newText)
-                                file.writeText(updated)
-                                listOf(UIMessagePart.Text("Patched $path: $count replacement(s)"))
-                            } else {
-                                // 2. Fuzzy: line-by-line trimmed matching
-                                val contentLines = content.lines()
-                                val oldLines = oldText.lines().map { it.trim() }
-                                val newLines = newText.lines()
-                                val fCount = (0..contentLines.size - oldLines.size).count { i ->
-                                    contentLines.subList(i, i + oldLines.size).map { it.trim() } == oldLines
-                                }
-                                if (fCount == 0) error("old_string not found in $path (checked exact and whitespace-normalized)")
-                                if (fCount > 1 && !replaceAll) error("Found $fCount fuzzy matches — set replace_all=true or make old_string more specific")
-
-                                // Apply replacement by finding first (or all) matching line window
-                                val resultLines = mutableListOf<String>()
-                                var cursor = 0
-                                var matchCount = 0
-                                while (cursor <= contentLines.size - oldLines.size) {
-                                    val window = contentLines.subList(cursor, cursor + oldLines.size)
-                                    if (window.map { it.trim() } == oldLines) {
-                                        resultLines.addAll(newLines)
-                                        cursor += oldLines.size
-                                        matchCount++
-                                        if (!replaceAll) {
-                                            resultLines.addAll(contentLines.drop(cursor))
-                                            cursor = contentLines.size
-                                            break
-                                        }
-                                    } else {
-                                        resultLines.add(contentLines[cursor])
-                                        cursor++
-                                    }
-                                }
-                                if (cursor < contentLines.size) {
-                                    resultLines.addAll(contentLines.drop(cursor))
-                                }
-                                file.writeText(resultLines.joinToString("\n"))
-                                val resultText = if (replaceAll) "Patched $path: $fCount fuzzy replacements"
-                                else "Patched $path: 1 fuzzy replacement"
-                                listOf(UIMessagePart.Text(resultText))
-                            }
+                        val result = withFileLock(file) {
+                            val r = applyTextEdits(file.readText(), edits, replaceAll)
+                            file.writeText(r.text)
+                            r
                         }
+                        val where = if (result.lines.isEmpty()) "" else " (line ${result.lines.joinToString(", ")})"
+                        listOf(UIMessagePart.Text("Patched $path: ${result.count} replacement(s)$where"))
                     }
                     "search" -> {
                         val mode = obj["mode"]?.jsonPrimitive?.contentOrNull ?: "name"
@@ -433,6 +390,55 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
             },
         ),
     )
+}
+
+private const val READ_MAX_LINES = 2000
+private const val READ_MAX_BYTES = 128 * 1024
+private const val READ_MAX_FILE_BYTES = 16L * 1024 * 1024
+
+/**
+ * 读一段文件：行号前缀 + **行/字节双限**，截断时把「下一步怎么读」直接写进输出。
+ * 抄自 pi-mono 的 read 工具 —— 模型不该为了拿下一段再猜一次；单行本身超限时给的是能直接跑的命令。
+ */
+private fun readFileWindow(file: File, offsetArg: Int, limitArg: Int): String {
+    if (file.length() > READ_MAX_FILE_BYTES) {
+        error(
+            "File is ${formatSize(file.length())} (> ${formatSize(READ_MAX_FILE_BYTES)}), too big to page through here — " +
+                "slice it with env_exec: sed -n 'a,bp' <path>  /  head -c $READ_MAX_BYTES <path>"
+        )
+    }
+    val lines = file.readLines()
+    val total = lines.size
+    if (total == 0) return "(empty file)"
+    val offset = offsetArg.coerceAtLeast(1)
+    if (offset > total) error("offset $offset is beyond end of file ($total lines)")
+    val start = offset - 1
+    val limit = limitArg.coerceIn(1, READ_MAX_LINES)
+    val endIdx = (start + limit).coerceAtMost(total)
+
+    val sb = StringBuilder()
+    var bytes = 0L
+    var shownTo = start
+    for (i in start until endIdx) {
+        val lineBytes = lines[i].toByteArray(Charsets.UTF_8).size + 1
+        if (bytes + lineBytes > READ_MAX_BYTES) {
+            if (i == start) {
+                val one = lines[i].toByteArray(Charsets.UTF_8).size.toLong()
+                return "[Line ${i + 1} is ${formatSize(one)}, exceeds the ${formatSize(READ_MAX_BYTES.toLong())} limit. " +
+                    "Use: env_exec with `sed -n '${i + 1}p' <path> | head -c $READ_MAX_BYTES`]"
+            }
+            break
+        }
+        sb.append(i + 1).append('|').append(lines[i]).append('\n')
+        bytes += lineBytes
+        shownTo = i + 1
+    }
+    val byLineLimit = shownTo - start >= limit
+    if (shownTo < total) {
+        val why = if (byLineLimit) "" else " (${formatSize(READ_MAX_BYTES.toLong())} limit)"
+        sb.append("\n[Showing lines $offset-$shownTo of $total$why. Use offset=${shownTo + 1} to continue.]")
+    }
+    return sb.toString().trimEnd('\n')
 }
 
 private fun formatSize(bytes: Long): String = when {
