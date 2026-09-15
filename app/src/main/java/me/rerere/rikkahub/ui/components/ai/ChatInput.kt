@@ -200,13 +200,13 @@ fun ChatInput(
     }
 
     fun sendMessage() {
-        focusManager.clearFocus(force = true)
-        keyboardController?.hide()
         if (loading) {
             // 生成中
             val pendingText = state.textContent.text.toString().trimStart()
             if (pendingText.isBlank()) {
                 // 空输入 = 中断当前生成
+                focusManager.clearFocus(force = true)
+                keyboardController?.hide()
                 onCancelClick()
                 return
             }
@@ -215,10 +215,13 @@ fun ChatInput(
                 toaster.show(slashContext.getString(R.string.slash_toast_generating))
                 return
             }
-            // 有内容 = 追加插话：入队，等当前任务结束
+            // 有内容 = 追加插话：入队，等当前任务结束。
+            // 这里刻意不动焦点、不收键盘 —— 插话后光标仍在输入框，可以连着插。
             onQueueClick()
             return
         }
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
         val text = state.textContent.text.toString().trimStart()
         if (text.startsWith("/")) {
             val cmd = matchSlashCommand(text, slashCommands)

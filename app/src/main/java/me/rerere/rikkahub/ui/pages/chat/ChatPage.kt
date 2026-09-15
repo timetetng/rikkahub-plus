@@ -447,7 +447,8 @@ private fun ChatPageContent(
                     onQueueClick = {
                         vm.handleMessageQueue(inputState.getContents())
                         inputState.clearInput()
-                        toaster.show("已加入队列，等当前任务结束后插话", type = ToastType.Normal)
+                        // 反馈交给输入框上方的「待插话 N」那一行；
+                        // 不再弹 toast —— 顶部横幅挡视线，也影响连着插。
                     },
                     onSendClick = {
                         if (currentChatModel == null) {
