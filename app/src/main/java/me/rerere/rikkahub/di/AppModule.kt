@@ -10,6 +10,7 @@ import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.service.ChatNotificationManager
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.service.EnvJobWatcher
 import me.rerere.rikkahub.utils.EmojiData
 import me.rerere.rikkahub.utils.EmojiUtils
 import me.rerere.rikkahub.utils.JsonInstant
@@ -70,6 +71,19 @@ val appModule = module {
         )
     }
 
+    // env_bg 后台任务的看门狗：job 跑完把结果送回发起它的会话。
+    // notifier 里用惰性 get 取 ChatService，避免和下面那条 single 构成循环依赖
+    // （这个 lambda 只在 job 真的跑完时才求值，那时 ChatService 早就就绪了）。
+    single {
+        EnvJobWatcher(
+            context = get(),
+            appScope = get(),
+            notifier = { conversationId, text, autoReply ->
+                get<ChatService>().notifyBackgroundJob(conversationId, text, autoReply)
+            },
+        )
+    }
+
     single {
         ChatService(
             context = get(),
@@ -86,6 +100,7 @@ val appModule = module {
             mcpManager = get(),
             filesManager = get(),
             skillManager = get(),
+            envJobWatcher = get(),
         )
     }
 

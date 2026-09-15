@@ -187,6 +187,7 @@ class ChatService(
     val mcpManager: McpManager,
     private val filesManager: FilesManager,
     private val skillManager: SkillManager,
+    private val envJobWatcher: EnvJobWatcher,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
@@ -486,6 +487,42 @@ class ChatService(
                 runCatching { previousJob?.join() }
                 finishInterruptedPendingTools(conversationId)
                 handleMessageComplete(conversationId, generationType = generationType)
+                _generationDoneFlow.emit(conversationId)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                addError(e, conversationId, title = context.getString(R.string.error_title_send_message))
+            }
+        }
+        session.setJob(job)
+    }
+
+    /**
+     * 后台任务（env_bg）结果回传：把结果作为 SYSTEM 消息插进会话，可选让模型接着说一句。
+     *
+     * 与 sendMessage/triggerGeneration 的关键差别：**不抢占**正在跑的生成 —— 会话正忙就先等它跑完
+     * （那两个方法开头的 previousJob.cancel() 会打断用户当前的对话，这里不能那么干）。
+     */
+    fun notifyBackgroundJob(conversationId: Uuid, text: String, autoReply: Boolean = true) {
+        if (text.isBlank()) return
+        val session = getOrCreateSession(conversationId)
+        val previousJob = session.getJob()
+
+        val job = appScope.launch {
+            try {
+                runCatching { previousJob?.join() }
+                if (session.state.value.messageNodes.isEmpty()) {
+                    initializeConversation(conversationId)
+                }
+                val current = session.state.value
+                val node = UIMessage(
+                    role = MessageRole.SYSTEM,
+                    parts = listOf(UIMessagePart.Text(text)),
+                ).toMessageNode()
+                saveConversation(conversationId, current.copy(messageNodes = current.messageNodes + node))
+                if (autoReply) {
+                    finishInterruptedPendingTools(conversationId)
+                    handleMessageComplete(conversationId)
+                }
                 _generationDoneFlow.emit(conversationId)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -1131,6 +1168,8 @@ class ChatService(
                                 assistant.envTarget,
                                 assistant.envCwd,
                                 assistant.toolExecTimeout,
+                                conversationId = conversationId,
+                                jobWatcher = envJobWatcher,
                             )
                         )
                     }
@@ -1516,6 +1555,8 @@ class ChatService(
                             assistant.envTarget,
                             assistant.envCwd,
                             assistant.toolExecTimeout,
+                            conversationId = conversationId,
+                            jobWatcher = envJobWatcher,
                         )
                     )
                 }

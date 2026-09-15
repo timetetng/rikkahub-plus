@@ -14,9 +14,11 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlin.uuid.Uuid
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.service.EnvJobWatcher
 
 /**
  * 设备执行环境工具 —— **一套工具，多个环境**。
@@ -131,6 +133,18 @@ private fun mapPath(t: Target, path: String): Pair<String, String?> {
 /** POSIX 单引号安全包裹 */
 private fun shq(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
+/**
+ * job 完成标记的路径对：(脚本视角, 宿主视角)。
+ * 看门狗用宿主视角读；脚本在自己那边写 —— 容器经 bind 落到同一份文件。
+ * ssh 目标不支持回传（远端写不进本机），返回空表示不登记。
+ */
+private fun markPaths(t: Target, name: String): Pair<String, String> = when {
+    t.isContainer -> "${EnvJobWatcher.CONTAINER_HOST_TMP}/rh-bg/$name.rc" to "${EnvJobWatcher.HOST_BG_DIR}/$name.rc"
+    t.mode == "termux" -> "${EnvJobWatcher.TERMUX_BG_DIR_HOST}/$name.rc" to "${EnvJobWatcher.TERMUX_BG_DIR_HOST}/$name.rc"
+    t.mode == "ssh" -> "" to ""
+    else -> "${EnvJobWatcher.HOST_BG_DIR}/$name.rc" to "${EnvJobWatcher.HOST_BG_DIR}/$name.rc"
+}
+
 private fun b64(s: String): String =
     Base64.encodeToString(s.toByteArray(Charsets.UTF_8), Base64.NO_WRAP).chunked(76).joinToString("\n")
 
@@ -243,6 +257,8 @@ fun createEnvTools(
     target: String,
     cwd: String,
     defaultTimeout: Int,
+    conversationId: Uuid? = null,
+    jobWatcher: EnvJobWatcher? = null,
 ): List<Tool> {
     val cfgTarget = target.ifBlank { "arch" }
     val cfgCwd = cwd.ifBlank { "/root" }
@@ -626,6 +642,18 @@ fun createEnvTools(
                         put("type", "string")
                         put("description", TARGET_DESC)
                     })
+                    put("notify", buildJsonObject {
+                        put("type", "string")
+                        put("description", "reply (default): when the job finishes, its result is injected into the " +
+                            "conversation it was started from and a follow-up reply is generated. " +
+                            "quiet: inject the result only, no reply. none: do not report back. " +
+                            "Not supported for ssh targets.")
+                    })
+                    put("notify_after", buildJsonObject {
+                        put("type", "integer")
+                        put("description", "Seconds. If it is still running after this long, report an interim status " +
+                            "once. 0 (default) = only report on completion.")
+                    })
                 },
                 required = listOf("name", "command"),
             )
@@ -640,9 +668,20 @@ fun createEnvTools(
                 ?.takeIf { it.isNotBlank() }
                 ?: error("env_bg: 'command' is required")
             val cwdForJob = if (t.isContainer) cfgCwd else defaultCwd(t)
+            val (rcScript, rcHost) = markPaths(t, name)
+            // 收尾标记：job 结束时把 exit code 原子写到 <name>.rc，看门狗靠它判完成。
+            // 用户命令包在子 shell 里，脚本里的 exit 不会吃掉收尾动作。
             val script = buildString {
                 if (cwdForJob.isNotEmpty()) append("cd ").append(shq(cwdForJob)).append(" || true\n")
-                append(command).append("\n")
+                append("(\n").append(command).append("\n)\n")
+                append("__rh_rc=\$?\n")
+                if (rcScript.isNotEmpty()) {
+                    append("mkdir -p \"\$(dirname ").append(shq(rcScript)).append(")\" 2>/dev/null\n")
+                    append("printf '%s' \"\$__rh_rc\" > ").append(shq(rcScript)).append(".tmp 2>/dev/null")
+                    append(" && mv -f ").append(shq(rcScript)).append(".tmp ").append(shq(rcScript))
+                    append(" 2>/dev/null\n")
+                }
+                append("exit \$__rh_rc\n")
             }
             val res = if (t.isContainer) {
                 runHostScript("WS_NAME=${t.container} $WS_TOOL bg $name", script, 120L)
@@ -669,11 +708,40 @@ fun createEnvTools(
             if (res.exitCode != 0 || stderr.contains("ws: 启动失败") || stderr.contains("ws: 启动超时")) {
                 failWith(res.stderr, res.exitCode, "env_bg failed to start job '$name' in ${t.label}")
             }
+            // 登记看门狗：跑完（或超过 notify_after）就把结果送回发起它的那个会话
+            val notifyMode = args.jsonObject["notify"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase() ?: "reply"
+            val notifyAfter = args.jsonObject["notify_after"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
+            val w = jobWatcher
+            val cid = conversationId
+            if (w != null && cid != null && rcHost.isNotEmpty() && notifyMode != "none") {
+                runCatching { runHostScript("rm -f " + shq(rcHost), null, 10L) }
+                w.register(
+                    EnvJobWatcher.WatchedJob(
+                        name = name,
+                        target = t.mode,
+                        container = if (t.isContainer) t.container else "",
+                        rcPathHost = rcHost,
+                        conversationId = cid.toString(),
+                        startedAt = System.currentTimeMillis(),
+                        deadlineSec = notifyAfter.coerceAtLeast(0L),
+                        notifyMode = if (notifyMode == "quiet") "quiet" else "reply",
+                    )
+                )
+            }
             val payload = buildJsonObject {
                 put("target", t.label)
                 put("name", name)
                 put("status", "started")
                 put("note", "background job '$name' started in ${t.label}; read it with env_log")
+                if (notifyMode == "none" || cid == null || w == null) {
+                    put("notify", "off")
+                } else {
+                    put(
+                        "notify",
+                        (if (notifyMode == "quiet") "on (quiet)" else "on (reply)") +
+                            if (notifyAfter > 0) "; interim report after ${notifyAfter}s" else ""
+                    )
+                }
                 put("output", JsonPrimitive((res.stdout + stderr).trim()))
             }
             listOf(UIMessagePart.Text(payload.toString()))

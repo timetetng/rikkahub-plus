@@ -28,6 +28,7 @@ import me.rerere.rikkahub.di.repositoryModule
 import me.rerere.rikkahub.di.viewModelModule
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.service.EnvJobWatcher
 import me.rerere.rikkahub.service.WebServerService
 import me.rerere.rikkahub.utils.CrashHandler
 import me.rerere.rikkahub.utils.DatabaseUtil
@@ -89,6 +90,10 @@ class RikkaHubApp : Application() {
         // sync upload files to DB
         syncManagedFiles()
         trace("sync done")
+
+        // 捡回上次留下的后台任务钩子（env_bg 的结果回传）
+        get<EnvJobWatcher>().init()
+        trace("envjobwatcher done")
 
         // Start WebServer if enabled in settings
         startWebServerIfEnabled()
