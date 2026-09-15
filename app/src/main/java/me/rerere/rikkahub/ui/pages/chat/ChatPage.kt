@@ -360,7 +360,7 @@ private fun ChatPageContent(
     val workspaceRepository: WorkspaceRepository = koinInject()
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val hazeState = rememberHazeState()
-    val queuedInterjections by vm.queuedInterjections.collectAsState()
+    val queuedInterjections by vm.queuedInterjections.collectAsStateWithLifecycle()
     val assistant = setting.getCurrentAssistant()
     var showFilesSheet by remember { mutableStateOf(false) }
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
