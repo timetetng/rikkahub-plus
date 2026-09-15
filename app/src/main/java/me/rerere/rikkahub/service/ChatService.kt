@@ -17,6 +17,8 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -195,6 +197,14 @@ class ChatService(
 
     // 统一会话管理
     private val sessions = ConcurrentHashMap<Uuid, ConversationSession>()
+
+    /**
+     * 每个会话一条「回传注入」通道。
+     * 两个后台任务同时跑完时，两次 notifyBackgroundJob 会先后 setJob，而 setJob 会
+     * cancel 掉前一个 job（ConversationSession.setJob 的第一件事）—— 结果就是先注入的
+     * 那一次生成被打断、报成"生成失败"。串行化之后一次只走一个。
+     */
+    private val injectionLocks = ConcurrentHashMap<Uuid, Mutex>()
     private val _sessionsVersion = MutableStateFlow(0L)
 
     private val database: AppDatabase by lazy {
@@ -510,8 +520,10 @@ class ChatService(
     fun notifyBackgroundJob(conversationId: Uuid, report: EnvJobWatcher.JobReport) {
         if (report.jobName.isBlank()) return
         val session = getOrCreateSession(conversationId)
+        val lock = injectionLocks.getOrPut(conversationId) { Mutex() }
 
         appScope.launch {
+          lock.withLock {
             // 等这一轮彻底跑完。job 结束时会自动把 _generationJob 置空，所以这个循环能退出。
             while (session.isGenerating) {
                 delay(500)
@@ -546,12 +558,17 @@ class ChatService(
                         handleMessageComplete(conversationId)
                     }
                     _generationDoneFlow.emit(conversationId)
+                } catch (e: CancellationException) {
+                    throw e        // 取消就是取消，不是错误：别弹红窗
                 } catch (e: Exception) {
                     e.printStackTrace()
                     addError(e, conversationId, title = context.getString(R.string.error_title_send_message))
                 }
             }
             session.setJob(job)
+            // 等这次注入 + 生成彻底结束再放行下一个回传，否则后一个 setJob 会把前一个掐掉
+            runCatching { job.join() }
+          }
         }
     }
 
