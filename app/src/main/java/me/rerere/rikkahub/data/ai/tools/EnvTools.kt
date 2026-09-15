@@ -55,6 +55,13 @@ private const val MAX_OUTPUT_CHARS = 120_000
 private const val EXEC_POLL_MS = 200L
 private const val MAX_FILE_READ = 512 * 1024
 
+/**
+ * 单条 exec 命令正文里 base64 载荷的上限。
+ * 整条命令最终是当作 argv 交给 droidspaces 的，超过几 KB 就会被 daemon 拒（bad request），
+ * 所以写大文件时要拆成多条短命令追加。必须是 4 的倍数（base64 按 4 字符对齐才能分块解码）。
+ */
+private const val B64_CHUNK_CHARS = 2048
+
 /** env_exec 在前台最多等这么久，之后转后台任务。硬上限：任何参数都覆盖不了 */
 private const val EXEC_FOREGROUND_DEFAULT_SEC = 30L
 private const val META_PREFIX = "__meta__ "
@@ -346,18 +353,14 @@ fun createEnvTools(
         return size to text
     }
 
-    /** 写文件（base64 管道，内容不经过 shell 解析） */
-    suspend fun writeRaw(t: Target, pathArg: String, content: String, timeoutSec: Long): Pair<Long, String> {
-        if (content.toByteArray(Charsets.UTF_8).size > MAX_WRITE_BYTES) {
-            error("env_write_file: content too large (> 2MB); use env_exec with a heredoc for bigger files")
-        }
-        val (path, _) = mapPath(t, pathArg)
+    /** 小文件：一条命令写完 */
+    suspend fun writeRawSingle(t: Target, path: String, payload: String, timeoutSec: Long): Pair<Long, String> {
         val script = buildString {
             append("p=").append(shq(path)).append("\n")
             append("[ -d \"\$p\" ] && { echo 'env_write_file: path is a directory' >&2; exit 4; }\n")
             append("mkdir -p \"\$(dirname \"\$p\")\" || { echo 'env_write_file: cannot create parent directory' >&2; exit 5; }\n")
             append("base64 -d > \"\$p\" <<'__CB64__'\n")
-            append(b64(content)).append("\n")
+            append(payload).append("\n")
             append("__CB64__\n")
             append("rc=\$?\n")
             append("[ \"\$rc\" -eq 0 ] || { echo 'env_write_file: base64 decode failed' >&2; exit 6; }\n")
@@ -368,6 +371,58 @@ fun createEnvTools(
         if (res.exitCode != 0) failWith(res.stderr, res.exitCode, "env_write_file failed")
         val (written, _) = metaLine(res)
         return written to path
+    }
+
+    /** 大文件：截断 + 逐块追加，每条命令都短到能过 droidspaces 的 argv 限制 */
+    suspend fun writeRawChunked(t: Target, path: String, payload: String, timeoutSec: Long): Pair<Long, String> {
+        val head = buildString {
+            append("p=").append(shq(path)).append("\n")
+            append("[ -d \"\$p\" ] && { echo 'env_write_file: path is a directory' >&2; exit 4; }\n")
+            append("mkdir -p \"\$(dirname \"\$p\")\" || { echo 'env_write_file: cannot create parent directory' >&2; exit 5; }\n")
+            append(": > \"\$p\" || exit 6\n")
+        }
+        runInTarget(t, head, timeoutSec).also {
+            if (it.exitCode != 0) failWith(it.stderr, it.exitCode, "env_write_file failed")
+        }
+        var offset = 0
+        while (offset < payload.length) {
+            val chunk = payload.substring(offset, minOf(offset + B64_CHUNK_CHARS, payload.length))
+            val script = buildString {
+                append("p=").append(shq(path)).append("\n")
+                append("printf '%s' ").append(shq(chunk)).append(" | base64 -d >> \"\$p\" || exit 6\n")
+            }
+            runInTarget(t, script, timeoutSec).also {
+                if (it.exitCode != 0) failWith(it.stderr, it.exitCode, "env_write_file failed (chunk at $offset)")
+            }
+            offset += chunk.length
+        }
+        val tail = buildString {
+            append("p=").append(shq(path)).append("\n")
+            append("sz=\$(wc -c < \"\$p\" 2>/dev/null); sz=\${sz:-0}\n")
+            append("echo \"${META_PREFIX}size=\$sz\"\n")
+        }
+        val res = runInTarget(t, tail, timeoutSec)
+        if (res.exitCode != 0) failWith(res.stderr, res.exitCode, "env_write_file failed")
+        val (written, _) = metaLine(res)
+        return written to path
+    }
+
+    /**
+     * 写文件（base64 管道，内容不经过 shell 解析）。
+     * 小内容一条命令搞定；大内容拆成「建目录 + 多块追加 + 收尾」，
+     * 否则整条命令会撑爆 droidspaces 的 argv 限制（daemon: bad request）。
+     */
+    suspend fun writeRaw(t: Target, pathArg: String, content: String, timeoutSec: Long): Pair<Long, String> {
+        if (content.toByteArray(Charsets.UTF_8).size > MAX_WRITE_BYTES) {
+            error("env_write_file: content too large (> 2MB); use env_exec with a heredoc for bigger files")
+        }
+        val (path, _) = mapPath(t, pathArg)
+        val payload = b64(content)
+        return if (payload.length <= B64_CHUNK_CHARS) {
+            writeRawSingle(t, path, payload, timeoutSec)
+        } else {
+            writeRawChunked(t, path, payload, timeoutSec)
+        }
     }
 
     val execTool = Tool(
@@ -613,7 +668,7 @@ fun createEnvTools(
         description = """
             Exact string replacement in a text file in a device environment (read-modify-write, no python3 needed).
             Nothing is written unless old_string is found uniquely (or replace_all=true). `path` is HOST view,
-            auto-mapped.
+            auto-mapped. Large files are written back in chunks, so file size is not limited by the exec argv limit.
         """.trimIndent().replace("\n", " "),
         needsApproval = { false },
         parameters = {

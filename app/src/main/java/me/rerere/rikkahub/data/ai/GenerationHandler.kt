@@ -90,6 +90,9 @@ class GenerationHandler(
         conversationId: Uuid? = null,
         generationType: me.rerere.rikkahub.data.model.GenerationType = me.rerere.rikkahub.data.model.GenerationType.NORMAL,
         maxTokensOverride: Int? = null,
+        // 追加插话队列的取用口：每个 step 边界（上一轮输出结束 / 一批工具执行完）调用一次。
+        // 返回非空则把消息追加到 messages 末尾并推给 UI，模型在下一 step 就能看到。
+        interjectionProvider: (suspend () -> List<UIMessage>)? = null,
     ): Flow<GenerationChunk> = flow {
         val provider = model.findProvider(settings.providers) ?: error("Provider not found")
         val providerImpl = providerManager.getProviderByType(provider)
@@ -234,8 +237,21 @@ class GenerationHandler(
     // ── 预构建：system 消息列表（循环不变，移到外面）──
     val prebuiltSystemMessages = buildCachedSystemPrompt(assistant, settings, messages, memories ?: emptyList(), conversationSystemPrompt, tools, model, context, conversationRepo)
 
+    // 追加插话：把队列里的消息追加到 messages 末尾并推给 UI。返回 true 表示注入成功
+    val injectQueuedMessages: suspend () -> Boolean = inject@{
+        val injected = interjectionProvider?.invoke().orEmpty()
+        if (injected.isEmpty()) return@inject false
+        Log.i(TAG, "streamText: inject ${injected.size} queued message(s)")
+        messages = messages + injected
+        emit(GenerationChunk.Messages(messages))
+        true
+    }
+
     for (stepIndex in 0 until maxSteps) {
             Log.i(TAG, "streamText: start step #$stepIndex (${model.id})")
+
+            // 插话检查点：上一 step 的输出 / 工具执行都结束了，先把用户排队的话插进来
+            injectQueuedMessages()
 
             // Check if we have tool calls ready to continue after user interaction.
             val pendingTools = messages.lastOrNull()?.getTools()?.filter {
@@ -317,6 +333,8 @@ class GenerationHandler(
 
                 val tools = messages.last().getTools().filter { !it.isExecuted }
                 if (tools.isEmpty()) {
+                    // 没有工具调用 = 本轮回答写完了。用户若在这期间插了话，先插进来再继续
+                    if (injectQueuedMessages()) continue
                     // no tool calls, break
                     break
                 }
@@ -374,6 +392,8 @@ class GenerationHandler(
                     val looped = toolNameCount.entries.find { it.value >= assistant.toolRecurringLimit }
                     if (looped != null) {
                         Log.w(TAG, "Guardrail: ${looped.key} called ${looped.value} times in one batch, breaking")
+                        // 人工插话优先于护栏：插进来就继续，不直接断
+                        if (injectQueuedMessages()) continue
                         break
                     }
                 }

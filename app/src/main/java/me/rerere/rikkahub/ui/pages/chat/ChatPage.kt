@@ -360,6 +360,7 @@ private fun ChatPageContent(
     val workspaceRepository: WorkspaceRepository = koinInject()
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val hazeState = rememberHazeState()
+    val queuedInterjections by vm.queuedInterjections.collectAsState()
     val assistant = setting.getCurrentAssistant()
     var showFilesSheet by remember { mutableStateOf(false) }
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
@@ -405,6 +406,8 @@ private fun ChatPageContent(
                 ChatInput(
                     state = inputState,
                     loading = loadingJob != null,
+                    queuedMessages = queuedInterjections,
+                    onRemoveQueued = { vm.removeQueuedMessage(it) },
                     settings = setting,
                     hazeState = hazeState,
                     completionProviders = completionProviders,
@@ -441,6 +444,11 @@ private fun ChatPageContent(
                     },
 
                     onCancelClick = { vm.stopGeneration() },
+                    onQueueClick = {
+                        vm.handleMessageQueue(inputState.getContents())
+                        inputState.clearInput()
+                        toaster.show("已加入队列，等当前任务结束后插话", type = ToastType.Normal)
+                    },
                     onSendClick = {
                         if (currentChatModel == null) {
                             toaster.show(context.getString(R.string.slash_toast_no_model), type = ToastType.Error)

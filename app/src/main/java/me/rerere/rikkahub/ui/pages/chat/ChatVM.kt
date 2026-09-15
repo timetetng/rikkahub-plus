@@ -42,6 +42,7 @@ import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FavoriteRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.ChatService
+import me.rerere.rikkahub.service.QueuedInterjection
 import me.rerere.rikkahub.data.datastore.getAssistantById
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
 import me.rerere.rikkahub.ui.hooks.ChatInputState
@@ -127,6 +128,11 @@ class ChatVM(
     // 生成完成
     val generationDoneFlow: SharedFlow<Uuid> = chatService.generationDoneFlow
 
+    /** 排队中的追加插话：生成中提交、等当前任务结束后插入对话 */
+    val queuedInterjections: StateFlow<List<QueuedInterjection>> =
+        chatService.getInterjectionsFlow(_conversationId)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     // MCP管理器
     val mcpManager = chatService.mcpManager
 
@@ -199,6 +205,17 @@ class ChatVM(
 
         chatService.sendMessage(_conversationId, content, answer)
     }
+
+    /**
+     * 生成中提交的消息：入队，等当前任务（输出 / 工具执行）结束后插话
+     */
+    fun handleMessageQueue(content: List<UIMessagePart>) {
+        if (content.isEmptyInputMessage()) return
+        chatService.enqueueInterjection(_conversationId, content)
+    }
+
+    /** 撤销一条排队中的插话 */
+    fun removeQueuedMessage(id: Uuid) = chatService.removeInterjection(_conversationId, id)
 
     fun handleMessageEdit(parts: List<UIMessagePart>, messageId: Uuid) {
         if (parts.isEmptyInputMessage()) return

@@ -15,6 +15,7 @@ import androidx.compose.foundation.content.contentReceiver
 import androidx.compose.foundation.content.hasMediaType
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import kotlin.uuid.Uuid
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -126,6 +127,7 @@ import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
 import me.rerere.rikkahub.ui.context.LocalASRState
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.context.LocalToaster
+import me.rerere.rikkahub.service.QueuedInterjection
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.utils.SoundEffectPlayer
 import org.koin.compose.koinInject
@@ -147,6 +149,11 @@ fun ChatInput(
     onMoreClick: () -> Unit,
     onCancelClick: () -> Unit,
     onSendClick: () -> Unit,
+    /** 生成中提交消息：入队，等当前任务结束后插话 */
+    onQueueClick: () -> Unit = {},
+    /** 排队中的插话（显示在输入框上方，点一下可撤销） */
+    queuedMessages: List<QueuedInterjection> = emptyList(),
+    onRemoveQueued: (Uuid) -> Unit = {},
     onUpdateConversation: (Conversation) -> Unit = {},
     onCompressContext: (String, String, String) -> Unit = { _, _, _ -> },
     onLongSendClick: () -> Unit,
@@ -195,13 +202,20 @@ fun ChatInput(
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
         if (loading) {
-            // 生成中：斜杠命令不打断当前生成（官方 waitUntilCondition 语义），提示等待；普通消息仍可取消
+            // 生成中
             val pendingText = state.textContent.text.toString().trimStart()
+            if (pendingText.isBlank()) {
+                // 空输入 = 中断当前生成
+                onCancelClick()
+                return
+            }
+            // 斜杠命令不打断当前生成（官方 waitUntilCondition 语义），提示等待
             if (pendingText.startsWith("/")) {
                 toaster.show(slashContext.getString(R.string.slash_toast_generating))
                 return
             }
-            onCancelClick()
+            // 有内容 = 追加插话：入队，等当前任务结束
+            onQueueClick()
             return
         }
         val text = state.textContent.text.toString().trimStart()
@@ -317,6 +331,13 @@ fun ChatInput(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
+                    if (queuedMessages.isNotEmpty()) {
+                        QueuedInterjectionsRow(
+                            queued = queuedMessages,
+                            onRemove = onRemoveQueued,
+                        )
+                    }
+
                     if (state.messageContent.isNotEmpty()) {
                         MediaFileInputRow(state = state)
                     }
@@ -444,6 +465,7 @@ fun ChatInput(
                             enter = fadeIn() + scaleIn(),
                             exit = fadeOut() + scaleOut(),
                         ) {
+                            // 生成中且输入框有内容 -> 这个键变成「插话」发送键；只有空输入时才是中断
                             Box(
                                 contentAlignment = Alignment.Center,
                                 modifier = Modifier
@@ -454,18 +476,20 @@ fun ChatInput(
                                         enabled = loading || !state.isEmpty(),
                                         onClick = {
                                             sendMessage()
-                                        }, onLongClick = {
+                                        },
+                                        // 生成中禁用长按：旧行为是长按「只发送不回答」会顺手取消生成，和插话冲突
+                                        onLongClick = if (loading) null else ({
                                             sendMessageWithoutAnswer()
-                                        }
+                                        })
                                     )
                             ) {
                                 val containerColor = when {
-                                    loading -> MaterialTheme.colorScheme.errorContainer
+                                    loading && state.isEmpty() -> MaterialTheme.colorScheme.errorContainer
                                     state.isEmpty() -> MaterialTheme.colorScheme.surfaceContainerHigh
                                     else -> MaterialTheme.colorScheme.primary
                                 }
                                 val contentColor = when {
-                                    loading -> MaterialTheme.colorScheme.onErrorContainer
+                                    loading && state.isEmpty() -> MaterialTheme.colorScheme.onErrorContainer
                                     state.isEmpty() -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                                     else -> MaterialTheme.colorScheme.onPrimary
                                 }
@@ -474,7 +498,7 @@ fun ChatInput(
                                     shape = CircleShape,
                                     color = containerColor,
                                     content = {})
-                                if (loading) {
+                                if (loading && state.isEmpty()) {
                                     KeepScreenOn()
                                     Icon(
                                         imageVector = HugeIcons.Cancel01,
@@ -483,6 +507,7 @@ fun ChatInput(
                                         modifier = Modifier.size(18.dp)
                                     )
                                 } else {
+                                    if (loading) KeepScreenOn()
                                     Icon(
                                         imageVector = HugeIcons.ArrowUp02,
                                         contentDescription = stringResource(R.string.send),
@@ -496,6 +521,71 @@ fun ChatInput(
                 }
             }
 
+        }
+    }
+}
+
+/**
+ * 生成中排队的追加插话：显示在输入框上方，点一下可以撤掉。
+ */
+@Composable
+private fun QueuedInterjectionsRow(
+    queued: List<QueuedInterjection>,
+    onRemove: (Uuid) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = HugeIcons.Clock02,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(14.dp)
+        )
+        Text(
+            text = "待插话 ${queued.size}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            queued.forEach { item ->
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    onClick = { onRemove(item.id) },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = item.text.ifBlank { "(附件)" }.replace("\n", " "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 140.dp),
+                        )
+                        Icon(
+                            imageVector = HugeIcons.Cancel01,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -186,6 +186,16 @@ private val outputTransformers by lazy {
  */
 private val ENVJOB_TAIL_NOTICE_ID: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000e001")
 
+/**
+ * 排队中的「追加插话」消息：生成过程中用户提交、等当前 step（输出 / 工具执行）结束后插入对话的消息。
+ * 只存在内存里，真正插话（追加到 messages 并 emit）时才落库。
+ */
+data class QueuedInterjection(
+    val id: Uuid,
+    val text: String,
+    val parts: List<UIMessagePart>,
+)
+
 class ChatService(
     private val context: Application,
     private val appScope: AppScope,
@@ -217,6 +227,13 @@ class ChatService(
      */
     private val injectionLocks = ConcurrentHashMap<Uuid, Mutex>()
     private val _sessionsVersion = MutableStateFlow(0L)
+
+    /** 追加插话队列：按会话分开，顺序 = 用户提交顺序 */
+    private val interjectionQueues = ConcurrentHashMap<Uuid, MutableList<QueuedInterjection>>()
+    private val _interjectionsFlow = MutableStateFlow<Map<Uuid, List<QueuedInterjection>>>(emptyMap())
+
+    /** UI 用：各会话当前排队中的插话 */
+    val interjectionsFlow: StateFlow<Map<Uuid, List<QueuedInterjection>>> = _interjectionsFlow.asStateFlow()
 
     private val database: AppDatabase by lazy {
         KoinJavaComponent.get<AppDatabase>(AppDatabase::class.java)
@@ -381,6 +398,66 @@ class ChatService(
             ).updateCurrentMessages(assistant.presetMessages)
             updateConversation(conversationId, newConversation)
         }
+    }
+
+    // ---- 追加插话队列 ----
+
+    private fun publishInterjections() {
+        _interjectionsFlow.value = interjectionQueues
+            .mapValues { (_, list) -> list.toList() }
+            .filterValues { it.isNotEmpty() }
+    }
+
+    /** 某会话排队中的插话（UI 订阅） */
+    fun getInterjectionsFlow(conversationId: Uuid): Flow<List<QueuedInterjection>> =
+        _interjectionsFlow.map { it[conversationId].orEmpty() }
+
+    /**
+     * 生成中追加一条消息：入队，等当前 step（输出 / 工具执行）结束后插话。
+     * 和正常发送一样先过助手的正则预处理。
+     */
+    fun enqueueInterjection(conversationId: Uuid, content: List<UIMessagePart>) {
+        if (content.isEmptyInputMessage()) return
+        val settings = settingsStore.settingsFlow.value
+        val assistant = settings.getAssistantById(getConversationFlow(conversationId).value.assistantId)
+            ?: settings.getCurrentAssistant()
+        val processed = preprocessUserInputParts(content, assistant)
+        val item = QueuedInterjection(
+            id = Uuid.random(),
+            text = processed.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text },
+            parts = processed,
+        )
+        interjectionQueues.compute(conversationId) { _, list ->
+            (list ?: mutableListOf()).also { it.add(item) }
+        }
+        publishInterjections()
+    }
+
+    /** 撤销一条排队消息 */
+    fun removeInterjection(conversationId: Uuid, id: Uuid) {
+        interjectionQueues.computeIfPresent(conversationId) { _, list ->
+            list.also { l -> l.removeAll { item -> item.id == id } }
+        }
+        if (interjectionQueues[conversationId]?.isEmpty() == true) {
+            interjectionQueues.remove(conversationId)
+        }
+        publishInterjections()
+    }
+
+    /** 取出并清空队列（生成循环调用），转成可直接追加到 messages 的 UIMessage */
+    private fun drainInterjections(conversationId: Uuid): List<UIMessage> {
+        val list = interjectionQueues.remove(conversationId)
+        if (list.isNullOrEmpty()) return emptyList()
+        publishInterjections()
+        return list.map { UIMessage(role = MessageRole.USER, parts = it.parts) }
+    }
+
+    /** 用户手动中断后，把还在排队的消息直接发出去（等于「别等下一步了，现在就插」） */
+    private fun flushInterjections(conversationId: Uuid) {
+        val list = interjectionQueues.remove(conversationId)
+        if (list.isNullOrEmpty()) return
+        publishInterjections()
+        sendMessage(conversationId, list.flatMap { it.parts })
     }
 
     // ---- 发送消息 ----
@@ -1205,6 +1282,8 @@ class ChatService(
                 conversationLorebookIds = conversation.lorebookIds,
                 workspaceCwd = conversation.workspaceCwd,
                 conversationId = conversation.id,
+                // 生成中可随时追加插话：队列在 ChatService，循环在每个 step 边界来取
+                interjectionProvider = { drainInterjections(conversationId) },
                 memories = if (assistant.useGlobalMemory) {
                     memoryRepository.getGlobalMemories()
                 } else {
@@ -2163,9 +2242,13 @@ class ChatService(
 
     // 停止当前会话生成任务（不清理会话缓存）
     suspend fun stopGeneration(conversationId: Uuid) {
-        val job = sessions[conversationId]?.getJob() ?: return
-        job.cancel()
-        runCatching { job.join() }
-        finishInterruptedPendingTools(conversationId)
+        val job = sessions[conversationId]?.getJob()
+        if (job != null) {
+            job.cancel()
+            runCatching { job.join() }
+            finishInterruptedPendingTools(conversationId)
+        }
+        // 用户点的是「中断」：若之前排了话，直接发出去，别把输入丢了
+        flushInterjections(conversationId)
     }
 }
