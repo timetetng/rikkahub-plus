@@ -2,12 +2,10 @@ package me.rerere.rikkahub.data.ai.tools
 
 import android.content.Context
 import android.util.Base64
-import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withTimeout
+import java.io.File
+import java.io.RandomAccessFile
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -54,6 +52,11 @@ private const val MAX_READ_BYTES = 2L * 1024 * 1024
 private const val MAX_WRITE_BYTES = 2 * 1024 * 1024
 private const val MAX_TIMEOUT_SEC = 600L
 private const val MAX_OUTPUT_CHARS = 120_000
+private const val EXEC_POLL_MS = 200L
+private const val MAX_FILE_READ = 512 * 1024
+
+/** env_exec 默认只在前台等这么久（超过就转后台任务），显式传 timeout_sec 可覆盖 */
+private const val EXEC_FOREGROUND_DEFAULT_SEC = 45L
 private const val META_PREFIX = "__meta__ "
 private const val READ_META = META_PREFIX + "size="
 private const val STATE_META = META_PREFIX + "state="
@@ -161,49 +164,105 @@ private fun trimOutput(s: String): String {
     else t.take(MAX_OUTPUT_CHARS) + "\n...[truncated; original ${t.length} chars]"
 }
 
-private suspend fun runProcess(argv: Array<String>, stdin: String?, timeoutSec: Long): ExecResult {
-    val process = try {
-        Runtime.getRuntime().exec(argv)
-    } catch (e: Exception) {
-        error("env bridge: failed to start ${argv.firstOrNull()}: ${e.message}")
-    }
-    val result = try {
-        withTimeout(timeoutSec * 1000L) {
-            coroutineScope {
-                val stdinJob = async(Dispatchers.IO) {
-                    try {
-                        process.outputStream.use { os ->
-                            if (stdin != null) os.write(stdin.toByteArray(Charsets.UTF_8))
-                            os.flush()
-                        }
-                    } catch (_: Exception) {
-                        // 子进程提前退出会关掉 stdin，不是致命错误
-                    }
-                }
-                val outDeferred = async(Dispatchers.IO) { process.inputStream.bufferedReader().readText() }
-                val errDeferred = async(Dispatchers.IO) { process.errorStream.bufferedReader().readText() }
-                val out = outDeferred.await()
-                val err = errDeferred.await()
-                stdinJob.await()
-                if (process.isAlive) process.waitFor(5, TimeUnit.SECONDS)
-                val code = try {
-                    if (process.isAlive) -1 else process.exitValue()
-                } catch (_: Exception) {
-                    -1
-                }
-                ExecResult(code, out, err)
-            }
-        }
-    } catch (e: TimeoutCancellationException) {
-        process.destroyForcibly()
+/** 前台执行的结果：要么跑完，要么超时（超时不一定要杀 —— exec 会把它转成后台任务接着跑）。 */
+private sealed interface ExecOutcome {
+    data class Done(val result: ExecResult) : ExecOutcome
+    data class Timeout(
+        val process: Process,
+        val outFile: File,
+        val errFile: File,
+        val inFile: File?,
+        val startedAt: Long,
+        val timeoutSec: Long,
+    ) : ExecOutcome
+}
+
+private fun cleanupFiles(vararg files: File?) {
+    files.forEach { f -> runCatching { f?.delete() } }
+}
+
+/** 超时后放弃：杀进程 + 清临时文件 */
+private fun ExecOutcome.Timeout.kill() {
+    runCatching { process.destroyForcibly() }
+    cleanupFiles(outFile, errFile, inFile)
+}
+
+/** 前台上读完就走的调用点：超时即杀即报错 */
+private fun ExecOutcome.expectDone(): ExecResult = when (this) {
+    is ExecOutcome.Done -> result
+    is ExecOutcome.Timeout -> {
+        kill()
         error(
             "env bridge: command timed out after ${timeoutSec}s and was killed. " +
-                "For long tasks (pacman/docker pull/build) use env_bg + env_log."
+                "For long tasks (pacman/docker pull/build) use env_bg (background job + env_log)."
         )
-    } finally {
-        runCatching { process.destroy() }
     }
-    return result
+}
+
+/** 读文件尾部（大输出只留尾巴，别把内存吃满） */
+private fun readFileCapped(f: File, maxBytes: Int = MAX_FILE_READ): String {
+    if (!f.exists() || !f.isFile) return ""
+    return runCatching {
+        if (f.length() <= maxBytes) f.readText()
+        else RandomAccessFile(f, "r").use { raf ->
+            raf.seek(f.length() - maxBytes)
+            val buf = ByteArray(maxBytes)
+            raf.readFully(buf)
+            String(buf, Charsets.UTF_8)
+        }
+    }.getOrDefault("")
+}
+
+/**
+ * 前台跑一个命令。
+ *
+ * stdin / stdout / stderr 全部走临时文件，不再用协程读流 —— 只为了两件事：
+ *   1. **取消要立刻生效**：主循环挂在 delay 上，用户一点停止就 destroyForcibly。
+ *      旧实现挂在 readText() 上等 EOF，取消信号到不了，job 一直卡在 cancelling
+ *      （stopGeneration 里的 job.join() 因此永远等不到）—— 这就是「点 X 没反应」的根因。
+ *   2. **超时不必杀**：把还在跑的进程句柄交回去，可以降级成后台任务继续跑。
+ */
+private suspend fun runProcess(argv: Array<String>, stdin: String?, timeoutSec: Long): ExecOutcome {
+    val outFile = File.createTempFile("rh-exec-", ".out")
+    val errFile = File.createTempFile("rh-exec-", ".err")
+    val inFile = if (stdin != null) {
+        File.createTempFile("rh-exec-", ".in").apply { writeText(stdin) }
+    } else null
+
+    val process = try {
+        ProcessBuilder(*argv)
+            .redirectOutput(outFile)
+            .redirectError(errFile)
+            .apply {
+                if (inFile != null) redirectInput(inFile)
+                else redirectInput(ProcessBuilder.Redirect.from(File("/dev/null")))
+            }
+            .start()
+    } catch (e: Exception) {
+        cleanupFiles(outFile, errFile, inFile)
+        error("env bridge: failed to start ${argv.firstOrNull()}: ${e.message}")
+    }
+
+    val startedAt = System.currentTimeMillis()
+    try {
+        while (true) {
+            if (!process.isAlive) break
+            if ((System.currentTimeMillis() - startedAt) / 1000 >= timeoutSec) {
+                return ExecOutcome.Timeout(process, outFile, errFile, inFile, startedAt, timeoutSec)
+            }
+            delay(EXEC_POLL_MS)
+        }
+        val code = runCatching { process.exitValue() }.getOrDefault(-1)
+        val out = readFileCapped(outFile)
+        val err = readFileCapped(errFile)
+        cleanupFiles(outFile, errFile, inFile)
+        return ExecOutcome.Done(ExecResult(code, out, err))
+    } catch (e: CancellationException) {
+        // 用户点了停止：立刻杀进程，别留着它继续吃资源
+        runCatching { process.destroyForcibly() }
+        cleanupFiles(outFile, errFile, inFile)
+        throw e
+    }
 }
 
 /**
@@ -223,16 +282,16 @@ private suspend fun runInSsh(t: Target, script: String, timeoutSec: Long): ExecR
         append(body)
         append(delim).append("\n")
     }
-    return runProcess(arrayOf("su", "-c", "$EXEC_TOOL arch"), wrapped, timeoutSec)
+    return runProcess(arrayOf("su", "-c", "$EXEC_TOOL arch"), wrapped, timeoutSec).expectDone()
 }
 
 /** 在目标环境里执行脚本 */
 private suspend fun runInTarget(t: Target, script: String, timeoutSec: Long): ExecResult =
-    if (t.isSsh) runInSsh(t, script, timeoutSec) else runProcess(argvFor(t), script, timeoutSec)
+    if (t.isSsh) runInSsh(t, script, timeoutSec) else runProcess(argvFor(t), script, timeoutSec).expectDone()
 
 /** 在宿主侧直接跑（ws 等辅助脚本） */
 private suspend fun runHostScript(shellCommand: String, stdin: String?, timeoutSec: Long): ExecResult =
-    runProcess(arrayOf("su", "-c", shellCommand), stdin, timeoutSec)
+    runProcess(arrayOf("su", "-c", shellCommand), stdin, timeoutSec).expectDone()
 
 private fun metaLine(result: ExecResult): Pair<Long, String> {
     val text = result.stdout
@@ -336,7 +395,12 @@ fun createEnvTools(
                     })
                     put("timeout_sec", buildJsonObject {
                         put("type", "integer")
-                        put("description", "Timeout in seconds (default $defTimeout, max $MAX_TIMEOUT_SEC). On timeout the process is killed.")
+                        put(
+                            "description",
+                            "How long to wait in the foreground (default ${EXEC_FOREGROUND_DEFAULT_SEC}s, max $MAX_TIMEOUT_SEC). " +
+                                "If it is still running after that it is NOT killed: it is handed over to a background " +
+                                "job, keeps running, and its result is injected into this conversation when it exits."
+                        )
                     })
                 },
                 required = listOf("command"),
@@ -352,7 +416,7 @@ fun createEnvTools(
                 if (t.isContainer) cfgCwd to null else defaultCwd(t) to null
             } else mapPath(t, cwdArg)
             val timeout = (args.jsonObject["timeout_sec"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
-                ?: defTimeout).coerceIn(5L, MAX_TIMEOUT_SEC)
+                ?: minOf(defTimeout, EXEC_FOREGROUND_DEFAULT_SEC)).coerceIn(5L, MAX_TIMEOUT_SEC)
 
             val script = buildString {
                 if (workdir.isNotEmpty()) {
@@ -361,19 +425,66 @@ fun createEnvTools(
                 }
                 append(command)
             }
-            val res = runInTarget(t, script, timeout)
-            if (res.exitCode == 4 && res.stderr.contains("no such working directory")) {
-                error("env_exec: cwd not found in ${t.label}: $workdir")
+            val outcome = if (t.isSsh) {
+                ExecOutcome.Done(runInSsh(t, script, timeout))
+            } else {
+                runProcess(argvFor(t), script, timeout)
             }
-            val payload = buildJsonObject {
-                put("target", t.label)
-                put("cwd", workdir)
-                if (mappedNote != null) put("path_mapped", mappedNote)
-                put("exit_code", JsonPrimitive(res.exitCode))
-                put("stdout", JsonPrimitive(trimOutput(res.stdout)))
-                put("stderr", JsonPrimitive(trimOutput(res.stderr)))
+            when (outcome) {
+                is ExecOutcome.Done -> {
+                    val res = outcome.result
+                    if (res.exitCode == 4 && res.stderr.contains("no such working directory")) {
+                        error("env_exec: cwd not found in ${t.label}: $workdir")
+                    }
+                    val payload = buildJsonObject {
+                        put("target", t.label)
+                        put("cwd", workdir)
+                        if (mappedNote != null) put("path_mapped", mappedNote)
+                        put("exit_code", JsonPrimitive(res.exitCode))
+                        put("stdout", JsonPrimitive(trimOutput(res.stdout)))
+                        put("stderr", JsonPrimitive(trimOutput(res.stderr)))
+                    }
+                    listOf(UIMessagePart.Text(payload.toString()))
+                }
+
+                is ExecOutcome.Timeout -> {
+                    // 还没跑完 —— 不杀它。交给看门狗收养成一个后台任务：进程继续跑、输出继续写，
+                    // 退出后自动把结果注入本会话。ssh 不行（远端进程本地收养不了）。
+                    val w = jobWatcher
+                    val cid = conversationId
+                    if (w != null && cid != null) {
+                        val label = "exec-" + (outcome.startedAt / 1000)
+                        w.adoptProcess(
+                            process = outcome.process,
+                            name = label,
+                            target = t.mode,
+                            container = if (t.isContainer) t.container else "",
+                            conversationId = cid,
+                            logPathHost = outcome.outFile.absolutePath,
+                            startedAt = outcome.startedAt,
+                            notifyMode = "reply",
+                        )
+                        val payload = buildJsonObject {
+                            put("target", t.label)
+                            put("cwd", workdir)
+                            put("status", "detached")
+                            put("job", label)
+                            put("note", "still running after ${timeout}s — handed over to background job '$label'. " +
+                                "It keeps running on its own; the result is injected into this conversation when " +
+                                "it exits. Do NOT poll it, just carry on with the user.")
+                            put("stdout_so_far", JsonPrimitive(trimOutput(readFileCapped(outcome.outFile))))
+                            put("stderr_so_far", JsonPrimitive(trimOutput(readFileCapped(outcome.errFile))))
+                        }
+                        listOf(UIMessagePart.Text(payload.toString()))
+                    } else {
+                        outcome.kill()
+                        error(
+                            "env bridge: command timed out after ${timeout}s and was killed. " +
+                                "For long tasks (pacman/docker pull/build) use env_bg (background job + env_log)."
+                        )
+                    }
+                }
             }
-            listOf(UIMessagePart.Text(payload.toString()))
         },
     )
 

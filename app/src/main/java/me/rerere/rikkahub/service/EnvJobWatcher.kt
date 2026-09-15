@@ -11,19 +11,20 @@ import kotlinx.serialization.builtins.ListSerializer
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.utils.JsonInstant
 import java.io.File
+import java.io.RandomAccessFile
 import java.util.concurrent.TimeUnit
 import kotlin.uuid.Uuid
 
 /**
- * 后台任务看门狗 —— env_bg 起的 job 跑完之后，把结果送回它所属的会话。
+ * 后台任务看门狗 —— 跑完的活儿把结果送回它所属的会话。
  *
- * 跨进程契约只有一个文件：job 脚本收尾时把 exit code 原子写进 `<name>.rc`
- * （由 EnvTools 的 env_bg wrapper 注入）。本类只干两件事：
- *   1. 轮询这些 rc 文件（每 5s 一条 su 命令，批量检查所有在看的 job）；
- *   2. 出现 rc（或到达设定的超时）→ 抓日志尾部 → 注入会话（可选触发一次回复）。
+ * 支持两种 job：
+ *   1. **脚本型**（env_bg 起的）：脚本收尾把 exit code 原子写进 `<name>.rc`，本类轮询那个文件。
+ *   2. **进程型**（env_exec 前台等超时后交出来的）：进程句柄还在，本类起个协程等它退出、
+ *      写 rc、再走同一套回传。日志就是那个进程的输出文件（logPathHost）。
  *
- * 进程被杀期间完成的任务不会丢：rc 文件还在磁盘上，等下次进程起来 init() 时补报。
- * 这是 pending job 落盘成 rh-watch-jobs.json 的意义 —— 那条记录 = 钩子。
+ * 在看的 job 落盘成 rh-watch-jobs.json —— 那就是「钩子」：进程被杀期间完成的任务不会丢，
+ * 下次起来 init() 时补报。
  */
 class EnvJobWatcher(
     private val context: Context,
@@ -61,6 +62,8 @@ class EnvJobWatcher(
         val startedAt: Long,
         val deadlineSec: Long = 0L,
         val notifyMode: String = "reply",
+        /** 进程型 job：输出文件（app 可直读）。脚本型为空，日志按 target 去查。 */
+        val logPathHost: String = "",
     )
 
     private val jobs = mutableListOf<WatchedJob>()
@@ -86,7 +89,7 @@ class EnvJobWatcher(
         }
     }
 
-    /** 登记一条 job（env_bg 启动成功后调）。 */
+    /** 登记一条脚本型 job（env_bg 启动成功后调）。 */
     fun register(job: WatchedJob) {
         synchronized(jobs) {
             jobs.removeAll { jobKey(it.target, it.name) == jobKey(job.target, job.name) }
@@ -97,14 +100,60 @@ class EnvJobWatcher(
         Log.i(TAG, "register: ${job.target}/${job.name} -> conversation ${job.conversationId}")
     }
 
+    /**
+     * 收养一个还在跑的前台进程（env_exec 等超时了但命令没结束）。
+     *
+     * 进程继续跑、输出继续写它自己的文件；这里只等它退出，然后写 rc 走常规回传。
+     * 调用方不要再 kill 这个进程。
+     */
+    fun adoptProcess(
+        process: Process,
+        name: String,
+        target: String,
+        container: String,
+        conversationId: Uuid,
+        logPathHost: String,
+        startedAt: Long,
+        deadlineSec: Long = 0L,
+        notifyMode: String = "reply",
+    ) {
+        val rcFile = File(context.filesDir, "rh-rc/$name.rc")
+        runCatching {
+            rcFile.parentFile?.mkdirs()
+            rcFile.delete()
+        }
+        appScope.launch(Dispatchers.IO) {
+            runCatching {
+                while (process.isAlive) delay(500)
+                val code = runCatching { process.exitValue() }.getOrDefault(-1)
+                rcFile.parentFile?.mkdirs()
+                rcFile.writeText(code.toString())
+            }.onFailure { Log.w(TAG, "adoptProcess($name) wait failed: ${it.message}") }
+        }
+        register(
+            WatchedJob(
+                name = name,
+                target = target,
+                container = container,
+                rcPathHost = rcFile.absolutePath,
+                conversationId = conversationId.toString(),
+                startedAt = startedAt,
+                deadlineSec = deadlineSec,
+                notifyMode = notifyMode,
+                logPathHost = logPathHost,
+            )
+        )
+    }
+
     /** 当前还在看在报的 job。 */
     fun snapshot(): List<WatchedJob> = synchronized(jobs) { jobs.toList() }
 
     private fun remove(job: WatchedJob, deleteMark: Boolean) {
         synchronized(jobs) { jobs.remove(job) }
         persist()
-        if (deleteMark) {
-            appScope.launch { runSu("rm -f ${shq(job.rcPathHost)}", 10L) }
+        appScope.launch {
+            if (deleteMark) runSu("rm -f ${shq(job.rcPathHost)}", 10L)
+            if (job.logPathHost.isNotEmpty()) runCatching { File(job.logPathHost).delete() }
         }
     }
 
@@ -158,7 +207,7 @@ class EnvJobWatcher(
                     append(" · ").append(targetLabel(job))
                     append(" · 已跑 ").append(elapsed).append("s，超过设定 ").append(job.deadlineSec).append("s")
                 }
-                append("\n日志尾部（").append(LOG_TAIL_LINES).append(" 行）：\n====")
+                append("\n日志尾部：\n====")
                 append("\n").append(tail.ifBlank { "(空)" }).append("\n====")
                 if (rc == null) {
                     append("\n（任务还在跑，需要时用 env_log 继续看）")
@@ -175,23 +224,41 @@ class EnvJobWatcher(
     private fun targetLabel(job: WatchedJob): String =
         if (job.target == "arch") "arch:${job.container}" else job.target
 
-    /** 一条 su 命令批量读全部 rc 文件，返回 path -> rc。 */
+    /**
+     * 读 rc 标记。app 自己写得进去的（进程型 job 的 rc 在 app 私有目录）直接读，
+     * 剩下的（/data/local/tmp、termux home）才走一条 su 批量读。
+     */
     private suspend fun readMarks(jobs: List<WatchedJob>): Map<String, String> {
         if (jobs.isEmpty()) return emptyMap()
-        val paths = jobs.joinToString(" ") { shq(it.rcPathHost) }
+        val result = mutableMapOf<String, String>()
+        val needSu = mutableListOf<WatchedJob>()
+        for (job in jobs) {
+            val direct = runCatching {
+                val f = File(job.rcPathHost)
+                if (f.exists() && f.canRead()) f.readText() else null
+            }.getOrNull()
+            if (direct != null) result[job.rcPathHost] = direct else needSu.add(job)
+        }
+        if (needSu.isEmpty()) return result
+
+        val paths = needSu.joinToString(" ") { shq(it.rcPathHost) }
         val script = "for p in $paths; do [ -f \"\$p\" ] && printf '%s%s=%s\\n' '$MARK_PREFIX' \"\$p\" \"\$(cat \"\$p\")\"; done\n"
         val out = runSu(script, 20L)
-        return out.lineSequence().mapNotNull { line ->
+        out.lineSequence().mapNotNull { line ->
             val i = line.indexOf(MARK_PREFIX)
             if (i < 0) return@mapNotNull null
             val rest = line.substring(i + MARK_PREFIX.length)
             val eq = rest.indexOf('=')
             if (eq <= 0) return@mapNotNull null
             rest.substring(0, eq) to rest.substring(eq + 1)
-        }.toMap()
+        }.forEach { (path, rc) -> result[path] = rc }
+        return result
     }
 
     private suspend fun readLogTail(job: WatchedJob): String {
+        if (job.logPathHost.isNotEmpty()) {
+            return tailOfFile(File(job.logPathHost))
+        }
         val cmd = when (job.target) {
             "arch" -> "WS_NAME=${shq(job.container)} /data/local/ws log ${shq(job.name)} $LOG_TAIL_LINES 2>&1"
             "termux" -> "tail -n $LOG_TAIL_LINES ${shq("$TERMUX_BG_DIR_HOST/${job.name}.log")} 2>&1"
@@ -199,7 +266,23 @@ class EnvJobWatcher(
         }
         val out = runSu(cmd, 30L)
         return if (out.length <= LOG_TAIL_CHARS) out.trim()
-        else out.take(LOG_TAIL_CHARS).trim() + "\n...[已截断]"
+        else out.takeLast(LOG_TAIL_CHARS).trim() + "\n...[已截断]"
+    }
+
+    /** 读文件尾部（大文件只读尾巴，别把内存吃满） */
+    private fun tailOfFile(f: File, maxBytes: Int = LOG_TAIL_CHARS * 4): String {
+        if (!f.exists() || !f.isFile) return ""
+        return runCatching {
+            val text = if (f.length() <= maxBytes) f.readText()
+            else RandomAccessFile(f, "r").use { raf ->
+                raf.seek(f.length() - maxBytes)
+                val buf = ByteArray(maxBytes)
+                raf.readFully(buf)
+                String(buf, Charsets.UTF_8)
+            }
+            if (text.length <= LOG_TAIL_CHARS) text.trim()
+            else "...[已截断]\n" + text.takeLast(LOG_TAIL_CHARS).trim()
+        }.getOrDefault("")
     }
 
     private suspend fun runSu(script: String, timeoutSec: Long): String = withContext(Dispatchers.IO) {
