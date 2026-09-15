@@ -78,8 +78,8 @@ val appModule = module {
         EnvJobWatcher(
             context = get(),
             appScope = get(),
-            notifier = { conversationId, text, autoReply ->
-                get<ChatService>().notifyBackgroundJob(conversationId, text, autoReply)
+            notifier = { conversationId, report ->
+                get<ChatService>().notifyBackgroundJob(conversationId, report)
             },
         )
     }

@@ -16,6 +16,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -497,39 +498,61 @@ class ChatService(
     }
 
     /**
-     * 后台任务（env_bg）结果回传：把结果作为 SYSTEM 消息插进会话，可选让模型接着说一句。
+     * 后台任务结果回传：插一条带工具卡片的助手消息，可选让模型接着说一句。
      *
-     * 与 sendMessage/triggerGeneration 的关键差别：**不抢占**正在跑的生成 —— 会话正忙就先等它跑完
-     * （那两个方法开头的 previousJob.cancel() 会打断用户当前的对话，这里不能那么干）。
+     * 两个必须守住的点：
+     *  1. **绝不打断正在跑的那一轮**。ConversationSession.setJob() 第一件事就是
+     *     `_generationJob.value?.cancel()` —— 直接插进去会把用户正在看的输出干掉
+     *     （旧实现就是这么干的）。所以这里先等会话空闲，再动手。
+     *  2. **用工具卡片而不是纯文本**：消息里放一个 UIMessagePart.Tool，UI 会走
+     *     ChatMessageToolStep 渲染成可折叠的步骤，日志默认收着，不刷屏。
      */
-    fun notifyBackgroundJob(conversationId: Uuid, text: String, autoReply: Boolean = true) {
-        if (text.isBlank()) return
+    fun notifyBackgroundJob(conversationId: Uuid, report: EnvJobWatcher.JobReport) {
+        if (report.jobName.isBlank()) return
         val session = getOrCreateSession(conversationId)
-        val previousJob = session.getJob()
 
-        val job = appScope.launch {
-            try {
-                runCatching { previousJob?.join() }
-                if (session.state.value.messageNodes.isEmpty()) {
-                    initializeConversation(conversationId)
-                }
-                val current = session.state.value
-                val node = UIMessage(
-                    role = MessageRole.SYSTEM,
-                    parts = listOf(UIMessagePart.Text(text)),
-                ).toMessageNode()
-                saveConversation(conversationId, current.copy(messageNodes = current.messageNodes + node))
-                if (autoReply) {
-                    finishInterruptedPendingTools(conversationId)
-                    handleMessageComplete(conversationId)
-                }
-                _generationDoneFlow.emit(conversationId)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                addError(e, conversationId, title = context.getString(R.string.error_title_send_message))
+        appScope.launch {
+            // 等这一轮彻底跑完。job 结束时会自动把 _generationJob 置空，所以这个循环能退出。
+            while (session.isGenerating) {
+                delay(500)
             }
+
+            val job = appScope.launch {
+                try {
+                    if (session.state.value.messageNodes.isEmpty()) {
+                        initializeConversation(conversationId)
+                    }
+                    val current = session.state.value
+                    val summary = buildJsonObject {
+                        put("job", report.jobName)
+                        put("target", report.target)
+                        if (report.exitCode.isNotBlank()) put("exit", report.exitCode)
+                        put("elapsed", "${report.elapsedSec}s")
+                        if (report.exitCode.isBlank()) put("status", "still running")
+                    }
+                    val part = UIMessagePart.Tool(
+                        toolCallId = "bgjob-${report.jobName}-${System.currentTimeMillis()}",
+                        toolName = "env_bg",
+                        input = summary.toString(),
+                        output = listOf(UIMessagePart.Text(report.logTail)),
+                    )
+                    val node = UIMessage(
+                        role = MessageRole.ASSISTANT,
+                        parts = listOf(part),
+                    ).toMessageNode()
+                    saveConversation(conversationId, current.copy(messageNodes = current.messageNodes + node))
+                    if (report.autoReply) {
+                        finishInterruptedPendingTools(conversationId)
+                        handleMessageComplete(conversationId)
+                    }
+                    _generationDoneFlow.emit(conversationId)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    addError(e, conversationId, title = context.getString(R.string.error_title_send_message))
+                }
+            }
+            session.setJob(job)
         }
-        session.setJob(job)
     }
 
     /**

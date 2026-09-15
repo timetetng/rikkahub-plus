@@ -55,8 +55,8 @@ private const val MAX_OUTPUT_CHARS = 120_000
 private const val EXEC_POLL_MS = 200L
 private const val MAX_FILE_READ = 512 * 1024
 
-/** env_exec 默认只在前台等这么久（超过就转后台任务），显式传 timeout_sec 可覆盖 */
-private const val EXEC_FOREGROUND_DEFAULT_SEC = 45L
+/** env_exec 在前台最多等这么久，之后转后台任务。硬上限：任何参数都覆盖不了 */
+private const val EXEC_FOREGROUND_DEFAULT_SEC = 30L
 private const val META_PREFIX = "__meta__ "
 private const val READ_META = META_PREFIX + "size="
 private const val STATE_META = META_PREFIX + "state="
@@ -397,9 +397,10 @@ fun createEnvTools(
                         put("type", "integer")
                         put(
                             "description",
-                            "How long to wait in the foreground (default ${EXEC_FOREGROUND_DEFAULT_SEC}s, max $MAX_TIMEOUT_SEC). " +
-                                "If it is still running after that it is NOT killed: it is handed over to a background " +
-                                "job, keeps running, and its result is injected into this conversation when it exits."
+                            "Hard timeout in seconds. Only honoured for ssh targets (a remote process cannot be " +
+                                "adopted, so it gets killed). Local targets always wait at most " +
+                                "${EXEC_FOREGROUND_DEFAULT_SEC}s in the foreground and are then handed over to a " +
+                                "background job that reports back when it exits — put genuinely long work in env_bg."
                         )
                     })
                 },
@@ -415,8 +416,11 @@ fun createEnvTools(
             val (workdir, mappedNote) = if (cwdArg == null) {
                 if (t.isContainer) cfgCwd to null else defaultCwd(t) to null
             } else mapPath(t, cwdArg)
-            val timeout = (args.jsonObject["timeout_sec"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
-                ?: minOf(defTimeout, EXEC_FOREGROUND_DEFAULT_SEC)).coerceIn(5L, MAX_TIMEOUT_SEC)
+            // 本地目标的前台等待上限是硬的，参数覆盖不了 —— 否则模型顺手传个大 timeout 又能把界面卡住。
+            // timeout_sec 只对 ssh 有意义（远端进程收养不了，只能硬杀）。
+            val requested = (args.jsonObject["timeout_sec"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                ?: defTimeout).coerceIn(5L, MAX_TIMEOUT_SEC)
+            val timeout = if (t.isSsh) requested else EXEC_FOREGROUND_DEFAULT_SEC
 
             val script = buildString {
                 if (workdir.isNotEmpty()) {

@@ -29,7 +29,7 @@ import kotlin.uuid.Uuid
 class EnvJobWatcher(
     private val context: Context,
     private val appScope: AppScope,
-    private val notifier: (Uuid, String, Boolean) -> Unit,
+    private val notifier: (Uuid, JobReport) -> Unit,
 ) {
     companion object {
         private const val TAG = "EnvJobWatcher"
@@ -50,6 +50,19 @@ class EnvJobWatcher(
 
         fun jobKey(target: String, name: String) = "$target:$name"
     }
+
+    /**
+     * 回传内容。ChatService 会把它渲染成一条带工具卡片的助手消息
+     * （复用 ChatMessageToolStep 的 UI：可折叠，日志默认收着，不刷屏）。
+     */
+    data class JobReport(
+        val jobName: String,
+        val target: String,
+        val exitCode: String = "",
+        val elapsedSec: Long = 0L,
+        val logTail: String = "",
+        val autoReply: Boolean = true,
+    )
 
     /** 一条待观察的 job。persist 到 files/rh-watch-jobs.json，就是跨进程的钩子。 */
     @Serializable
@@ -196,26 +209,25 @@ class EnvJobWatcher(
 
             val elapsed = (now - job.startedAt) / 1000
             val tail = readLogTail(job)
-            val text = buildString {
-                if (rc != null) {
-                    append("[后台任务完成] ").append(job.name)
-                    append(" · ").append(targetLabel(job))
-                    append(" · exit=").append(rc.trim().ifBlank { "?" })
-                    append(" · 耗时 ").append(elapsed).append("s")
-                } else {
-                    append("[后台任务仍在运行] ").append(job.name)
-                    append(" · ").append(targetLabel(job))
-                    append(" · 已跑 ").append(elapsed).append("s，超过设定 ").append(job.deadlineSec).append("s")
-                }
-                append("\n日志尾部：\n====")
-                append("\n").append(tail.ifBlank { "(空)" }).append("\n====")
+            val logText = buildString {
+                append(tail.ifBlank { "(空)" })
                 if (rc == null) {
-                    append("\n（任务还在跑，需要时用 env_log 继续看）")
+                    append("\n\n（任务还在跑，需要时用 env_log 继续看）")
                 }
             }
             remove(job, deleteMark = true)
             runCatching {
-                notifier(Uuid.parse(job.conversationId), text, job.notifyMode == "reply")
+                notifier(
+                    Uuid.parse(job.conversationId),
+                    JobReport(
+                        jobName = job.name,
+                        target = targetLabel(job),
+                        exitCode = rc?.trim().orEmpty(),
+                        elapsedSec = elapsed,
+                        logTail = logText,
+                        autoReply = job.notifyMode == "reply",
+                    ),
+                )
             }.onFailure { Log.w(TAG, "notify failed: ${it.message}") }
             Log.i(TAG, "reported: ${job.target}/${job.name} (rc=${rc ?: "timeout"})")
         }
