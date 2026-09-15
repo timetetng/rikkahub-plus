@@ -175,6 +175,17 @@ private val outputTransformers by lazy {
     )
 }
 
+/**
+ * 后台任务回传时补的那条收尾消息，固定用这个 id。
+ *
+ * 为什么要补：卡片消息（assistant + tool part）转换后，消息列表以 tool_result 收尾，
+ * opencode zen 这类网关会直接 400（响应体只有 {"model":"..."}），所以末尾要顶一条 user 文本。
+ *
+ * 为什么不显示：流式回吐（GenerationChunk.Messages）时按这个 id 剔除，
+ * 不写回会话 —— 它只存在于发给模型的那一次请求里，界面上看不到。
+ */
+private val ENVJOB_TAIL_NOTICE_ID: Uuid = Uuid.parse("00000000-0000-0000-0000-00000000e001")
+
 class ChatService(
     private val context: Application,
     private val appScope: AppScope,
@@ -562,6 +573,7 @@ class ChatService(
                             conversationId,
                             extraMessages = listOf(
                                 UIMessage(
+                                    id = ENVJOB_TAIL_NOTICE_ID,
                                     role = MessageRole.USER,
                                     parts = listOf(
                                         UIMessagePart.Text(
@@ -1311,8 +1323,10 @@ class ChatService(
             }.collect { chunk ->
                 when (chunk) {
                     is GenerationChunk.Messages -> {
+                        // 回传补的收尾消息只发给模型，按固定 id 剔除，不写回会话（界面不显示）
+                        val visibleMessages = chunk.messages.filterNot { it.id == ENVJOB_TAIL_NOTICE_ID }
                         val updatedConversation = getConversationFlow(conversationId).value
-                            .updateCurrentMessages(chunk.messages)
+                            .updateCurrentMessages(visibleMessages)
                         updateConversation(conversationId, updatedConversation)
 
                         // 前台时停止前台 Service（用户切回来了）
@@ -1322,7 +1336,7 @@ class ChatService(
 
                         // 通知等边缘副作用由 ChatNotificationManager 消费；
                         // tryEmit 不挂起，事件丢失只影响单次通知更新，不能反压生成链
-                        chunk.messages.lastOrNull()?.let { lastMessage ->
+                        visibleMessages.lastOrNull()?.let { lastMessage ->
                             appEventBus.tryEmit(
                                 AppEvent.ChatGenerationUpdate(conversationId, lastMessage, senderName)
                             )
