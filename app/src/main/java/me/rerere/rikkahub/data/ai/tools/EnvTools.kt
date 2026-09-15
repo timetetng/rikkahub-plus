@@ -6,6 +6,8 @@ import java.io.File
 import java.io.RandomAccessFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -155,8 +157,29 @@ private fun markPaths(t: Target, name: String): Pair<String, String> = when {
     else -> "${EnvJobWatcher.HOST_BG_DIR}/$name.rc" to "${EnvJobWatcher.HOST_BG_DIR}/$name.rc"
 }
 
+/**
+ * 同一目标 + 同一路径的「读 -> 改 -> 写」串行化。
+ *
+ * 模型会在一条消息里并发发出多个 env_* 调用：两个 env_edit_file 各自读到改动前的快照，
+ * 后写的把先写的冲掉。用 Mutex 而不是 ReentrantLock —— 临界区里有 suspend 调用，
+ * 拿阻塞锁会把调度线程一起钉死。思路同 pi-mono 的 withFileMutationQueue。
+ * 只增不删：条目数 = 进程内碰过的路径数，可忽略。
+ */
+private val envPathLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+
+private suspend fun <T> withPathLock(t: Target, path: String, block: suspend () -> T): T =
+    envPathLocks.computeIfAbsent("${t.label}:$path") { Mutex() }.withLock { block() }
+
+/**
+ * base64 载荷：**一行到底，不带换行**。
+ *
+ * 分块写回是按字符切的，而换行不参与 base64 的 4 字符对齐 —— 只要载荷里混进换行，
+ * 切出来的块长度就不是 4 的倍数：GNU coreutils 的 `base64 -d` 直接 "invalid input"
+ * 退出 1（文件被截断在第一个块边界），toybox 的 `base64 -d` 更阴 —— 静默丢掉余数、
+ * 返回 0，于是工具报「写成功」、文件却从断点起全是乱码。
+ */
 private fun b64(s: String): String =
-    Base64.encodeToString(s.toByteArray(Charsets.UTF_8), Base64.NO_WRAP).chunked(76).joinToString("\n")
+    Base64.encodeToString(s.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
 
 private fun b64decode(s: String): String =
     String(Base64.decode(s.replace(Regex("\\s"), ""), Base64.DEFAULT), Charsets.UTF_8)
@@ -418,11 +441,19 @@ fun createEnvTools(
         }
         val (path, _) = mapPath(t, pathArg)
         val payload = b64(content)
-        return if (payload.length <= B64_CHUNK_CHARS) {
+        check(payload.length % 4 == 0) { "env_write_file: bad base64 payload length ${payload.length}" }
+        val expected = content.toByteArray(Charsets.UTF_8).size.toLong()
+        val (written, writtenPath) = if (payload.length <= B64_CHUNK_CHARS) {
             writeRawSingle(t, path, payload, timeoutSec)
         } else {
             writeRawChunked(t, path, payload, timeoutSec)
         }
+        // 兜底：toybox 的 base64 -d 对残缺输入静默成功，只能自己拿字节数拦
+        if (written != expected) {
+            error("env_write_file: wrote $written bytes to $writtenPath but expected $expected " +
+                "- content truncated/corrupted")
+        }
+        return written to writtenPath
     }
 
     val execTool = Tool(
@@ -652,7 +683,8 @@ fun createEnvTools(
                 ?: error("env_write_file: 'path' is required")
             val content = args.jsonObject["content"]?.jsonPrimitive?.contentOrNull
                 ?: error("env_write_file: 'content' is required")
-            val (written, path) = writeRaw(t, pathArg, content, defTimeout)
+            val lockPath = mapPath(t, pathArg).first
+            val (written, path) = withPathLock(t, lockPath) { writeRaw(t, pathArg, content, defTimeout) }
             val payload = buildJsonObject {
                 put("target", t.label)
                 put("path", path)
@@ -711,21 +743,24 @@ fun createEnvTools(
             val replaceAll = args.jsonObject["replace_all"]?.jsonPrimitive?.contentOrNull?.toBoolean() ?: false
             val (path, mappedNote) = mapPath(t, pathArg)
 
-            val (_, text) = readRaw(t, path, defTimeout)   // path 已翻译过，mapPath 不会再动它
-            val cnt = countOccurrences(text, oldString)
-            if (cnt == 0) error("env_edit_file: old_string not found in ${t.label}:$path")
-            if (cnt > 1 && !replaceAll) {
-                error("env_edit_file: old_string occurs $cnt times in ${t.label}:$path; set replace_all=true or add more context")
+            var written = 0L
+            withPathLock(t, path) {
+                val (_, text) = readRaw(t, path, defTimeout)   // path 已翻译过，mapPath 不会再动它
+                val cnt = countOccurrences(text, oldString)
+                if (cnt == 0) error("env_edit_file: old_string not found in ${t.label}:$path")
+                if (cnt > 1 && !replaceAll) {
+                    error("env_edit_file: old_string occurs $cnt times in ${t.label}:$path; set replace_all=true or add more context")
+                }
+                val lines = ArrayList<Int>()
+                var i = text.indexOf(oldString)
+                while (i >= 0) {
+                    lines.add(text.substring(0, i).count { c -> c == '\n' } + 1)
+                    if (!replaceAll) break
+                    i = text.indexOf(oldString, i + oldString.length)
+                }
+                val newText = if (replaceAll) text.replace(oldString, newString) else text.replaceFirst(oldString, newString)
+                written = writeRaw(t, path, newText, defTimeout).first
             }
-            val lines = ArrayList<Int>()
-            var i = text.indexOf(oldString)
-            while (i >= 0) {
-                lines.add(text.substring(0, i).count { c -> c == '\n' } + 1)
-                if (!replaceAll) break
-                i = text.indexOf(oldString, i + oldString.length)
-            }
-            val newText = if (replaceAll) text.replace(oldString, newString) else text.replaceFirst(oldString, newString)
-            val (written, _) = writeRaw(t, path, newText, defTimeout)
             val payload = buildJsonObject {
                 put("target", t.label)
                 put("path", path)

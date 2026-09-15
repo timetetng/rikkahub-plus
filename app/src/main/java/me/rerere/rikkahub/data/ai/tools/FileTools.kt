@@ -5,6 +5,30 @@ import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
+
+/**
+ * 同一文件的「读 -> 改 -> 写」串行化。
+ *
+ * 模型会在一条消息里并发发出多个 file 调用：同一文件的两个 patch 同批到达时，
+ * 两边都读到改动前的快照，后写的把先写的冲掉（此前记成「FUSE 缓存 / patch 拿到陈旧快照」，
+ * 其实是并发，不是缓存）。这里按 canonical path 加锁，把 read-modify-write 整段圈住，
+ * 思路同 opencode 的 per-file Semaphore、pi-mono 的 withFileMutationQueue。
+ * 只增不删：条目数 = 进程内碰过的文件数，可忽略。
+ */
+private val fileMutationLocks = ConcurrentHashMap<String, ReentrantLock>()
+
+private fun <T> withFileLock(file: File, block: () -> T): T {
+    val key = runCatching { file.canonicalPath }.getOrElse { file.absolutePath }
+    val lock = fileMutationLocks.computeIfAbsent(key) { ReentrantLock() }
+    lock.lock()
+    try {
+        return block()
+    } finally {
+        lock.unlock()
+    }
+}
 
 /**
  * 文件操作工具 — 统一 file 工具，通过 action 参数选择操作。
@@ -196,7 +220,7 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                         val content = obj["content"]?.jsonPrimitive?.content ?: error("content required")
                         val path = resolveDestPath(rawPath)
                         path.parentFile?.mkdirs()
-                        path.writeText(content)
+                        withFileLock(path) { path.writeText(content) }
                         listOf(UIMessagePart.Text("OK: wrote ${content.length} bytes to ${path.absolutePath}"))
                     }
                     "list" -> {
@@ -276,54 +300,56 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                         val replaceAll = obj["replace_all"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
                         val file = resolveFile(path)
                         if (!file.exists()) error("File not found: $path")
-                        val content = file.readText()
+                        withFileLock(file) {
+                            val content = file.readText()
 
-                        // 1. Exact match
-                        val count = content.windowedSequence(oldText.length).count { it == oldText }
-                        if (count > 0) {
-                            if (count > 1 && !replaceAll) error("Found $count matches — set replace_all=true or make old_string more specific")
-                            val updated = if (replaceAll) content.replace(oldText, newText)
-                            else content.replaceFirst(oldText, newText)
-                            file.writeText(updated)
-                            listOf(UIMessagePart.Text("Patched $path: $count replacement(s)"))
-                        } else {
-                            // 2. Fuzzy: line-by-line trimmed matching
-                            val contentLines = content.lines()
-                            val oldLines = oldText.lines().map { it.trim() }
-                            val newLines = newText.lines()
-                            val fCount = (0..contentLines.size - oldLines.size).count { i ->
-                                contentLines.subList(i, i + oldLines.size).map { it.trim() } == oldLines
-                            }
-                            if (fCount == 0) error("old_string not found in $path (checked exact and whitespace-normalized)")
-                            if (fCount > 1 && !replaceAll) error("Found $fCount fuzzy matches — set replace_all=true or make old_string more specific")
-
-                            // Apply replacement by finding first (or all) matching line window
-                            val resultLines = mutableListOf<String>()
-                            var cursor = 0
-                            var matchCount = 0
-                            while (cursor <= contentLines.size - oldLines.size) {
-                                val window = contentLines.subList(cursor, cursor + oldLines.size)
-                                if (window.map { it.trim() } == oldLines) {
-                                    resultLines.addAll(newLines)
-                                    cursor += oldLines.size
-                                    matchCount++
-                                    if (!replaceAll) {
-                                        resultLines.addAll(contentLines.drop(cursor))
-                                        cursor = contentLines.size
-                                        break
-                                    }
-                                } else {
-                                    resultLines.add(contentLines[cursor])
-                                    cursor++
+                            // 1. Exact match
+                            val count = content.windowedSequence(oldText.length).count { it == oldText }
+                            if (count > 0) {
+                                if (count > 1 && !replaceAll) error("Found $count matches — set replace_all=true or make old_string more specific")
+                                val updated = if (replaceAll) content.replace(oldText, newText)
+                                else content.replaceFirst(oldText, newText)
+                                file.writeText(updated)
+                                listOf(UIMessagePart.Text("Patched $path: $count replacement(s)"))
+                            } else {
+                                // 2. Fuzzy: line-by-line trimmed matching
+                                val contentLines = content.lines()
+                                val oldLines = oldText.lines().map { it.trim() }
+                                val newLines = newText.lines()
+                                val fCount = (0..contentLines.size - oldLines.size).count { i ->
+                                    contentLines.subList(i, i + oldLines.size).map { it.trim() } == oldLines
                                 }
+                                if (fCount == 0) error("old_string not found in $path (checked exact and whitespace-normalized)")
+                                if (fCount > 1 && !replaceAll) error("Found $fCount fuzzy matches — set replace_all=true or make old_string more specific")
+
+                                // Apply replacement by finding first (or all) matching line window
+                                val resultLines = mutableListOf<String>()
+                                var cursor = 0
+                                var matchCount = 0
+                                while (cursor <= contentLines.size - oldLines.size) {
+                                    val window = contentLines.subList(cursor, cursor + oldLines.size)
+                                    if (window.map { it.trim() } == oldLines) {
+                                        resultLines.addAll(newLines)
+                                        cursor += oldLines.size
+                                        matchCount++
+                                        if (!replaceAll) {
+                                            resultLines.addAll(contentLines.drop(cursor))
+                                            cursor = contentLines.size
+                                            break
+                                        }
+                                    } else {
+                                        resultLines.add(contentLines[cursor])
+                                        cursor++
+                                    }
+                                }
+                                if (cursor < contentLines.size) {
+                                    resultLines.addAll(contentLines.drop(cursor))
+                                }
+                                file.writeText(resultLines.joinToString("\n"))
+                                val resultText = if (replaceAll) "Patched $path: $fCount fuzzy replacements"
+                                else "Patched $path: 1 fuzzy replacement"
+                                listOf(UIMessagePart.Text(resultText))
                             }
-                            if (cursor < contentLines.size) {
-                                resultLines.addAll(contentLines.drop(cursor))
-                            }
-                            file.writeText(resultLines.joinToString("\n"))
-                            val resultText = if (replaceAll) "Patched $path: $fCount fuzzy replacements"
-                            else "Patched $path: 1 fuzzy replacement"
-                            listOf(UIMessagePart.Text(resultText))
                         }
                     }
                     "search" -> {
