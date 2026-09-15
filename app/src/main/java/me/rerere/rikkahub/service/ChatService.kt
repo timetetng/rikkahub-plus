@@ -555,7 +555,22 @@ class ChatService(
                     saveConversation(conversationId, current.copy(messageNodes = current.messageNodes + node))
                     if (report.autoReply) {
                         finishInterruptedPendingTools(conversationId)
-                        handleMessageComplete(conversationId)
+                        // 卡片消息（assistant + tool part）转换后，列表末尾是一条 tool_result，
+                        // 网关不认这种结尾，直接 400。补一条只发给模型、不落库的 user 消息收尾，
+                        // 会话里看不到它，UI 上不会多出东西。
+                        handleMessageComplete(
+                            conversationId,
+                            extraMessages = listOf(
+                                UIMessage(
+                                    role = MessageRole.USER,
+                                    parts = listOf(
+                                        UIMessagePart.Text(
+                                            "（后台任务 ${report.jobName} 已结束，日志见上方卡片）"
+                                        )
+                                    ),
+                                )
+                            ),
+                        )
                     }
                     _generationDoneFlow.emit(conversationId)
                 } catch (e: CancellationException) {
@@ -1095,6 +1110,12 @@ class ChatService(
         conversationId: Uuid,
         messageRange: ClosedRange<Int>? = null,
         generationType: GenerationType = GenerationType.NORMAL,
+        /**
+         * 只发给模型、不落库的收尾消息。
+         * 后台任务回传用它把消息列表的末尾从 tool_result 顶成 user 文本 ——
+         * 否则网关会以 400 拒收（见 notifyBackgroundJob 的注释）。
+         */
+        extraMessages: List<UIMessage> = emptyList(),
     ) {
         val settings = settingsStore.settingsFlow.first()
         val initialConversation = getConversationFlow(conversationId).value
@@ -1164,7 +1185,7 @@ class ChatService(
                     } else {
                         it
                     }
-                },
+                } + extraMessages,
                 assistant = assistant,
                 maxSteps = assistant.totalStepsLimit,
                 conversationSystemPrompt = conversation.customSystemPrompt,
