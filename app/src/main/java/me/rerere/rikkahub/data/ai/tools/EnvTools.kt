@@ -63,10 +63,15 @@ private const val MAX_FILE_READ = 512 * 1024
 
 /**
  * 单条 exec 命令正文里 base64 载荷的上限。
- * 整条命令最终是当作 argv 交给 droidspaces 的，超过几 KB 就会被 daemon 拒（bad request），
- * 所以写大文件时要拆成多条短命令追加。必须是 4 的倍数（base64 按 4 字符对齐才能分块解码）。
+ *
+ * 整条命令最终是当作 argv 交给 `droidspaces --name=X run sh -c '<cmd>'`，实测整条上限 ≈ 8192 B
+ * （8162 过、8192 拒），超了 daemon 只回一行 "daemon: bad request"。块里还要放路径和脚本开销，
+ * 所以取 7 KiB 留余量。必须是 4 的倍数（base64 按 4 字符对齐才能分块解码）。
+ *
+ * 这个值直接决定大文件写入要跑几趟：24 KB 的文件 2048 要 16 趟、7168 只要 4 趟，
+ * 而每趟往返约 90 ms —— 块大小就是这条路径上的主要成本。
  */
-private const val B64_CHUNK_CHARS = 2048
+private const val B64_CHUNK_CHARS = 7168
 
 /** env_exec 在前台最多等这么久，之后转后台任务。硬上限：任何参数都覆盖不了 */
 private const val EXEC_FOREGROUND_DEFAULT_SEC = 30L
@@ -462,7 +467,14 @@ fun createEnvTools(
                 append("printf '%s' ").append(shq(chunk)).append(" | base64 -d >> \"\$p\" || exit 6\n")
             }
             runInTarget(t, script, timeoutSec).also {
-                if (it.exitCode != 0) failWith(it.stderr, it.exitCode, "env_write_file failed (chunk at $offset)")
+                // droidspaces 命令超限时 rc=0 但打一行 "daemon: bad request" —— 不看输出就会静默丢块
+                val noise = (it.stdout + it.stderr).trim()
+                if (it.exitCode != 0 || noise.contains("bad request")) {
+                    error(
+                        "env_write_file failed (chunk at $offset): " +
+                            (noise.ifBlank { "exit ${it.exitCode}" }).take(200)
+                    )
+                }
             }
             offset += chunk.length
         }
