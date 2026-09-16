@@ -16,6 +16,15 @@
 -keepattributes Signature,InnerClasses,EnclosingMethod
 -keep,allowobfuscation class * extends com.fasterxml.jackson.core.type.TypeReference
 
+# 内嵌 Ktor 服务靠 Auth0/Jackson 签发与校验 JWT（Web 服务的访问密码），
+# 上游原文：R8 optimization can break JWT payload parsing —— 这两条在「简化 keep rules」
+# 里被删掉了，补回，否则开了访问密码就会一直 401。
+-keep class com.fasterxml.jackson.** { *; }
+-keep class com.auth0.jwt.** { *; }
+
+# 上游原文：Kotlin reflection is used to instantiate serializable settings classes at runtime.
+-keep @kotlinx.serialization.Serializable class * { *; }
+
 # JLaTeXMath loads these optional alphabet registrations by their binary names.
 -keep,allowoptimization class org.scilab.forge.jlatexmath.cyrillic.CyrillicRegistration {
     public <init>();
