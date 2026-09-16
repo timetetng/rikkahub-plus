@@ -61,6 +61,9 @@ private const val SPILL_DIR = "/data/user/0/me.rerere.rikkahub/cache/rh-exec"
 private const val EXEC_POLL_MS = 200L
 private const val MAX_FILE_READ = 512 * 1024
 
+/** app 侧暂存目录（external files 下）：大内容先落这儿，再让目标一条命令搬过去 */
+private const val STAGE_DIR = "rh-exchange"
+
 /**
  * 单条 exec 命令正文里 base64 载荷的上限。
  *
@@ -155,6 +158,29 @@ private fun mapPath(t: Target, path: String): Pair<String, String?> {
 private fun shq(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
 /**
+ * 「app 先落盘、目标侧一条命令搬过去」的暂存文件。
+ *
+ * app 自己写共享存储**不花 exec 往返**，而目标能直接看到同一份文件（容器把
+ * /data/media/0 bind 成 /mnt/media0，root 就是同一份文件系统）—— 于是任意大小的写入都只要
+ * 1 跳，直接绕开 base64 分块。返回 (app 侧文件, 目标视角路径)；拿不到返回 null，调用方退回分块写。
+ */
+private fun stageForTarget(t: Target, context: Context, name: String, bytes: ByteArray): Pair<File, String>? {
+    val ext = context.getExternalFilesDir(null) ?: return null
+    val dir = File(ext, STAGE_DIR)
+    if (!dir.isDirectory && !dir.mkdirs()) return null
+    runCatching {
+        val cutoff = System.currentTimeMillis() - 3600_000
+        dir.listFiles()?.forEach { if (it.lastModified() < cutoff) it.delete() }
+    }
+    val f = File(dir, name)
+    if (runCatching { f.writeBytes(bytes) }.isFailure) return null
+    // app 写出来是 /storage/emulated/0/...（FUSE 别名），宿主视角的等价路径是 /data/media/0/...，
+    // 再由 mapPath 翻成目标视角（容器 = /mnt/media0/...）
+    val hostPath = f.absolutePath.replaceFirst("/storage/emulated/0", "/data/media/0")
+    return f to mapPath(t, hostPath).first
+}
+
+/**
  * job 完成标记的路径对：(脚本视角, 宿主视角)。
  * 看门狗用宿主视角读；脚本在自己那边写 —— 容器经 bind 落到同一份文件。
  * ssh 目标不支持回传（远端写不进本机），返回空表示不登记。
@@ -187,8 +213,11 @@ private suspend fun <T> withPathLock(t: Target, path: String, block: suspend () 
  * 退出 1（文件被截断在第一个块边界），toybox 的 `base64 -d` 更阴 —— 静默丢掉余数、
  * 返回 0，于是工具报「写成功」、文件却从断点起全是乱码。
  */
-private fun b64(s: String): String =
-    Base64.encodeToString(s.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+private fun b64(s: String): String = b64(s.toByteArray(Charsets.UTF_8))
+
+/** 已经拿到字节的调用点不用再转换一次（2 MB 内容少一趟整块拷贝） */
+private fun b64(bytes: ByteArray): String =
+    Base64.encodeToString(bytes, Base64.NO_WRAP)
 
 private fun b64decode(s: String): String =
     String(Base64.decode(s.replace(Regex("\\s"), ""), Base64.DEFAULT), Charsets.UTF_8)
@@ -448,42 +477,66 @@ fun createEnvTools(
         return written to path
     }
 
-    /** 大文件：截断 + 逐块追加，每条命令都短到能过 droidspaces 的 argv 限制 */
+    /**
+     * 大文件的兜底路径：base64 分块追加 —— 只有目标看不见 app 的暂存文件时才走到这儿。
+     *
+     * 每条命令都是一次独立往返，能并就并：首块顺手做「建目录 + 截断」，末块顺手做「校验字节数」，
+     * 24 KB 由 8 跳降到 6 跳。分块必须按 4 字符切（base64 对齐），否则 GNU base64 -d 直接报错、
+     * toybox 静默丢字节。
+     */
     suspend fun writeRawChunked(t: Target, path: String, payload: String, timeoutSec: Long): Pair<Long, String> {
-        val head = buildString {
-            append("p=").append(shq(path)).append("\n")
-            append("[ -d \"\$p\" ] && { echo 'env_write_file: path is a directory' >&2; exit 4; }\n")
-            append("mkdir -p \"\$(dirname \"\$p\")\" || { echo 'env_write_file: cannot create parent directory' >&2; exit 5; }\n")
-            append(": > \"\$p\" || exit 6\n")
-        }
-        runInTarget(t, head, timeoutSec).also {
-            if (it.exitCode != 0) failWith(it.stderr, it.exitCode, "env_write_file failed")
-        }
         var offset = 0
         while (offset < payload.length) {
             val chunk = payload.substring(offset, minOf(offset + B64_CHUNK_CHARS, payload.length))
+            val isFirst = offset == 0
+            val isLast = offset + chunk.length >= payload.length
             val script = buildString {
                 append("p=").append(shq(path)).append("\n")
-                append("printf '%s' ").append(shq(chunk)).append(" | base64 -d >> \"\$p\" || exit 6\n")
-            }
-            runInTarget(t, script, timeoutSec).also {
-                // droidspaces 命令超限时 rc=0 但打一行 "daemon: bad request" —— 不看输出就会静默丢块
-                val noise = (it.stdout + it.stderr).trim()
-                if (it.exitCode != 0 || noise.contains("bad request")) {
-                    error(
-                        "env_write_file failed (chunk at $offset): " +
-                            (noise.ifBlank { "exit ${it.exitCode}" }).take(200)
-                    )
+                if (isFirst) {
+                    append("[ -d \"\$p\" ] && { echo 'env_write_file: path is a directory' >&2; exit 4; }\n")
+                    append("mkdir -p \"\$(dirname \"\$p\")\" || { echo 'env_write_file: cannot create parent directory' >&2; exit 5; }\n")
+                    append(": > \"\$p\" || exit 6\n")
                 }
+                append("printf '%s' ").append(shq(chunk)).append(" | base64 -d >> \"\$p\" || exit 6\n")
+                if (isLast) {
+                    append("sz=\$(wc -c < \"\$p\" 2>/dev/null); sz=\${sz:-0}\n")
+                    append("echo \"${META_PREFIX}size=\$sz\"\n")
+                }
+            }
+            val res = runInTarget(t, script, timeoutSec)
+            val noise = (res.stdout + res.stderr).trim()
+            // droidspaces 命令超限时 rc=0 但打一行 "daemon: bad request" —— 不看输出就会静默丢块
+            if (res.exitCode != 0 || noise.contains("bad request")) {
+                error(
+                    "env_write_file failed (chunk at $offset): " +
+                        (noise.ifBlank { "exit ${res.exitCode}" }).take(200)
+                )
+            }
+            if (isLast) {
+                val (written, _) = metaLine(res)
+                return written to path
             }
             offset += chunk.length
         }
-        val tail = buildString {
+        error("env_write_file: empty payload")
+    }
+
+    /**
+     * 目标侧一条命令把 app 已经落好盘的内容搬过去 —— 任意大小都只要 1 跳。
+     * 目标看不见暂存文件时以 exit 9 退出，调用方据此退回分块写。
+     */
+    suspend fun writeRawViaStage(t: Target, path: String, src: String, timeoutSec: Long): Pair<Long, String> {
+        val script = buildString {
+            append("s=").append(shq(src)).append("\n")
+            append("[ -r \"\$s\" ] || { echo 'env_write_file: staged file is not readable from this target' >&2; exit 9; }\n")
             append("p=").append(shq(path)).append("\n")
+            append("[ -d \"\$p\" ] && { echo 'env_write_file: path is a directory' >&2; exit 4; }\n")
+            append("mkdir -p \"\$(dirname \"\$p\")\" || { echo 'env_write_file: cannot create parent directory' >&2; exit 5; }\n")
+            append("cat \"\$s\" > \"\$p\" || exit 6\n")
             append("sz=\$(wc -c < \"\$p\" 2>/dev/null); sz=\${sz:-0}\n")
             append("echo \"${META_PREFIX}size=\$sz\"\n")
         }
-        val res = runInTarget(t, tail, timeoutSec)
+        val res = runInTarget(t, script, timeoutSec)
         if (res.exitCode != 0) failWith(res.stderr, res.exitCode, "env_write_file failed")
         val (written, _) = metaLine(res)
         return written to path
@@ -491,21 +544,35 @@ fun createEnvTools(
 
     /**
      * 写文件（base64 管道，内容不经过 shell 解析）。
-     * 小内容一条命令搞定；大内容拆成「建目录 + 多块追加 + 收尾」，
-     * 否则整条命令会撑爆 droidspaces 的 argv 限制（daemon: bad request）。
+     * 小内容一条命令搞定；大内容优先「app 落盘 + 目标侧 1 条命令搬进去」（1 跳），
+     * 只有当目标看不见暂存文件（ssh / termux 等）时，才退回 base64 分块追加。
      */
     suspend fun writeRaw(t: Target, pathArg: String, content: String, timeoutSec: Long): Pair<Long, String> {
-        if (content.toByteArray(Charsets.UTF_8).size > MAX_WRITE_BYTES) {
+        val bytes = content.toByteArray(Charsets.UTF_8)
+        if (bytes.size > MAX_WRITE_BYTES) {
             error("env_write_file: content too large (> 2MB); use env_exec with a heredoc for bigger files")
         }
         val (path, _) = mapPath(t, pathArg)
-        val payload = b64(content)
+        val expected = bytes.size.toLong()
+        val payload = b64(bytes)
         check(payload.length % 4 == 0) { "env_write_file: bad base64 payload length ${payload.length}" }
-        val expected = content.toByteArray(Charsets.UTF_8).size.toLong()
         val (written, writtenPath) = if (payload.length <= B64_CHUNK_CHARS) {
             writeRawSingle(t, path, payload, timeoutSec)
         } else {
-            writeRawChunked(t, path, payload, timeoutSec)
+            val staged = stageForTarget(t, context, "w-${System.nanoTime()}.tmp", bytes)
+            var fast: Pair<Long, String>? = null
+            if (staged != null) {
+                // 不能用 runCatching：它会把取消也吞掉，用户点停止后仍会顺着 fallback 接着写
+                fast = try {
+                    writeRawViaStage(t, path, staged.second, timeoutSec)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+                runCatching { staged.first.delete() }
+            }
+            fast ?: writeRawChunked(t, path, payload, timeoutSec)
         }
         // 兜底：toybox 的 base64 -d 对残缺输入静默成功，只能自己拿字节数拦
         if (written != expected) {
