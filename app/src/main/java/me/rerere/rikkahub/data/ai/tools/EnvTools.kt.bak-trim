@@ -210,12 +210,6 @@ private fun trimOutput(s: String): String {
         start--
     }
     if (start == 0) return t
-    if (start == lines.size) {
-        // 单行就超预算：至少留这一行的尾部，绝不能把整行原样吐给模型（上限会失效）
-        val last = lines[lines.size - 1]
-        val tail = last.takeLast(MAX_OUTPUT_CHARS / 2)
-        return "[one line is ${last.length} chars — showing its last ${tail.length} chars]\n$tail"
-    }
     val kept = lines.subList(start, lines.size).joinToString("\n")
     return "[... ${start} lines / ${t.length - chars} chars omitted — full output goes to the spill file when it is oversized ...]\n$kept"
 }
@@ -280,10 +274,7 @@ private fun readFileCapped(f: File, maxBytes: Int = MAX_FILE_READ): String {
             raf.seek(f.length() - maxBytes)
             val buf = ByteArray(maxBytes)
             raf.readFully(buf)
-            val s = String(buf, Charsets.UTF_8)
-            // 按字节 seek 可能从 UTF-8 字符中间切开 → 丢掉第一个残缺行
-            val nl = s.indexOf('\n')
-            if (nl >= 0) s.substring(nl + 1) else s
+            String(buf, Charsets.UTF_8)
         }
     }.getOrDefault("")
 }
