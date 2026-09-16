@@ -19,7 +19,7 @@ import ru.noties.jlatexmath.JLatexMathSplitter
 
 fun assumeLatexSize(latex: String, fontSize: Float): Rect {
     return runCatching {
-        JLatexMathDrawable.builder(latex)
+        JLatexMathDrawable.builder(processLatex(latex))
             .textSize(fontSize)
             .padding(0)
             .build()
@@ -139,7 +139,7 @@ private val displayBracketRegex = Regex("""^\\\[(.*?)\\\]""", RegexOption.DOT_MA
 
 private fun processLatex(latex: String): String {
     val trimmed = latex.trim()
-    return when {
+    val inner = when {
         displayDollarRegex.matches(trimmed) ->
             displayDollarRegex.find(trimmed)?.groupValues?.get(1)?.trim() ?: trimmed
 
@@ -154,4 +154,12 @@ private fun processLatex(latex: String): String {
 
         else -> trimmed
     }
+    return rewriteUnsupportedCommands(inner)
 }
+
+// JLaTeXMath 只实现了 \textcolor，没有 \color 的声明式写法；就地转换，
+// 命名色（red/blue/...）、#RRGGBB、r,g,b 三种写法都能被 \textcolor 吃下。
+private val colorDeclarationRegex = Regex("""\\color\s*\{([^{}]+)\}""")
+
+private fun rewriteUnsupportedCommands(latex: String): String =
+    colorDeclarationRegex.replace(latex) { "\\textcolor{${it.groupValues[1]}}" }

@@ -24,6 +24,15 @@
     public <init>();
 }
 
+# JLaTeXMath 的动态宏/环境是反射加载的：MacroInfo 用
+# Class.forName("org.scilab.forge.jlatexmath.NewCommandMacro")
+# + getDeclaredMethod("executeMacro", TeXParser, String[]) 取方法。
+# \operatorname \pmod \newcommand \dfrac 以及 cases/matrix/aligned 等所有 \begin{} 环境
+# 都注册在它里面。R8 改名后反射静默失败（macro 字段为 null），公式会原样回显成源码。
+# 必须保留类名、无参构造与方法名。
+-keep class org.scilab.forge.jlatexmath.NewCommandMacro { *; }
+-keep class org.scilab.forge.jlatexmath.NewEnvironmentMacro { *; }
+
 # Chaquopy bridge — 所有方法通过Python反射调用，R8不能删
 -keep class me.rerere.rikkahub.data.ai.python.PythonBridge { *; }
 -keep class me.rerere.rikkahub.data.ai.python.JsBridge { *; }
