@@ -114,6 +114,15 @@ fun splitLatex(
     }.getOrElse { emptyList() }
 }
 
+/**
+ * 行内公式的占位文本（InlineContent 的 alternateText）。
+ *
+ * 占位文本不是装饰：文本选择 / 复制 / 无障碍朗读拿到的都是它。原先写死 "[Latex]"，
+ * 长按选中公式复制只能得到 "[Latex]"。这里直接用 LaTeX 原文，复制即得公式源码。
+ * 一条公式被 [splitLatex] 拆成多段时，每段都带完整原文，任意一段被选中都能拿到整条公式。
+ */
+fun latexPlaceholder(latex: String): String = latex.ifBlank { "[Latex]" }
+
 @Composable
 fun LatexDrawable(
     drawable: JLatexMathDrawable,
