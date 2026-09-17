@@ -1,7 +1,10 @@
 package me.rerere.rikkahub.ui.components.richtext
 
+import android.content.Context
 import android.graphics.Rect
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
@@ -11,9 +14,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.TextUnit
+import me.rerere.rikkahub.utils.writeClipboardText
 import ru.noties.jlatexmath.JLatexMathDrawable
 import ru.noties.jlatexmath.JLatexMathSplitter
 
@@ -122,6 +127,22 @@ fun splitLatex(
  * 一条公式被 [splitLatex] 拆成多段时，每段都带完整原文，任意一段被选中都能拿到整条公式。
  */
 fun latexPlaceholder(latex: String): String = latex.ifBlank { "[Latex]" }
+
+/**
+ * 长按公式就把 LaTeX 原文写进剪贴板。
+ *
+ * 公式是 Canvas 画出来的，长按命中的是 InlineContent 的占位文本；与其让用户拖选区再复制，
+ * 不如长按就地复制。这里不做成 Composable：调用点有的在 buildAnnotatedString 里，拿不到 LocalContext，
+ * 所以由调用方把 Context 传进来。
+ */
+fun latexCopyModifier(context: Context, latex: String): Modifier = Modifier.pointerInput(latex) {
+    detectTapGestures(
+        onLongPress = {
+            context.writeClipboardText(latex)
+            Toast.makeText(context, "已复制 LaTeX 公式", Toast.LENGTH_SHORT).show()
+        }
+    )
+}
 
 @Composable
 fun LatexDrawable(

@@ -10,6 +10,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.takeOrElse
@@ -25,7 +26,7 @@ fun MathInline(
         latex = proceededLatex,
         color = LocalContentColor.current,
         fontSize = fontSize.takeOrElse { LocalTextStyle.current.fontSize },
-        modifier = modifier,
+        modifier = modifier.then(latexCopyModifier(LocalContext.current, proceededLatex)),
     )
 }
 
@@ -47,7 +48,8 @@ fun MathBlock(
                 .align(Alignment.Center)
                 .horizontalScroll(
                     rememberScrollState()
-                ),
+                )
+                .then(latexCopyModifier(LocalContext.current, proceededLatex)),
         )
     }
 }

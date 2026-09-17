@@ -1235,7 +1235,12 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
                                     height = height,
                                     placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
                                 ), children = {
-                                    LatexDrawable(drawable = drawable)
+                                    LatexDrawable(
+                                        drawable = drawable,
+                                        modifier = latexCopyModifier(
+                                            LocalContext.current, formula
+                                        )
+                                    )
                                 })
                         )
                     }
