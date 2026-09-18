@@ -104,9 +104,14 @@ fun StatsPage(vm: StatsVM = koinViewModel()) {
             }
         } else {
             val points = stats.series[granularity].orEmpty()
-            val selection = (selectionStart..selectionEnd)
-                .takeIf { selectionEnd >= selectionStart && selectionStart in points.indices && selectionEnd in points.indices }
-                ?: points.indices.takeIf { it.isNotEmpty() }?.let { it.first..it.last }
+            val selection = when {
+                selectionEnd >= selectionStart &&
+                    selectionStart in points.indices &&
+                    selectionEnd in points.indices -> selectionStart..selectionEnd
+
+                points.isNotEmpty() -> points.indices.first..points.indices.last
+                else -> null
+            }
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
