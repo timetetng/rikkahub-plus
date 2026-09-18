@@ -1182,10 +1182,10 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="stats_day_total_tokens">总消耗</string>
   <string name="stats_dialog_close">关闭</string>
   <string name="stats_empty_data">暂无数据</string>
-  <string name="stats_granularity_day">天</string>
-  <string name="stats_granularity_hour">小时</string>
-  <string name="stats_granularity_month">月</string>
-  <string name="stats_granularity_week">周</string>
+  <string name="stats_range_days_30">近 30 天</string>
+  <string name="stats_range_days_7">近 7 天</string>
+  <string name="stats_range_hours_24">近 24 小时</string>
+  <string name="stats_range_months_12">近 12 个月</string>
   <string name="stats_heatmap_metric_messages">消息数</string>
   <string name="stats_heatmap_metric_tokens">Token</string>
   <string name="stats_hour_avg_messages">平均每天 %1$.1f 条</string>

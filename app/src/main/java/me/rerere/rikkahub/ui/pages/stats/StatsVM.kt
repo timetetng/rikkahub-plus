@@ -33,8 +33,13 @@ import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
 
-/** 曲线的时间颗粒度 */
-enum class StatsGranularity { HOUR, DAY, WEEK, MONTH }
+/**
+ * 曲线的时间窗口。
+ *
+ * 颗粒度由窗口决定，不单独设置：24 小时 → 每小时一个点；7 天 / 30 天 → 每天一个点；
+ * 12 个月 → 每月一个点。
+ */
+enum class StatsRange { HOURS_24, DAYS_7, DAYS_30, MONTHS_12 }
 
 /** 曲线可切换的指标 */
 enum class TokenMetric { TOTAL, PROMPT, COMPLETION, CACHED }
@@ -79,7 +84,7 @@ data class AppStats(
     val conversationsPerDay: Map<LocalDate, Int> = emptyMap(),
     /** 热力图对应区间（近 52 周）的每日 token，用于着色与点击详情 */
     val tokensPerDay: Map<LocalDate, TokenPoint> = emptyMap(),
-    val series: Map<StatsGranularity, List<TokenPoint>> = emptyMap(),
+    val series: Map<StatsRange, List<TokenPoint>> = emptyMap(),
     val hourProfile7: List<Float> = List(24) { 0f },
     val hourProfile30: List<Float> = List(24) { 0f },
     val hourProfile7Counts: List<Float> = List(24) { 0f },
@@ -106,9 +111,8 @@ data class AppStats(
         }
 }
 
-private const val HOUR_SPAN = 72
-private const val WEEK_SPAN = 52
-private const val MONTH_SPAN = 24
+private const val HOUR_SPAN = 24
+private const val MONTH_SPAN = 12
 
 private val HOUR_KEY_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH")
 private val MONTH_KEY_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM")
@@ -138,22 +142,19 @@ class StatsVM(
             .with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY))
             .minusWeeks(52)
 
-        // 各颗粒度的完整桶键（查询结果里缺失的桶要补 0，否则曲线会失去时间连续性）
+        // 曲线需要的完整桶键（查询结果里缺失的桶要补 0，否则曲线会失去时间连续性）
         val dayCount = ChronoUnit.DAYS.between(heatmapStart, today).toInt() + 1
         val hourStart = now.truncatedTo(ChronoUnit.HOURS).minusHours((HOUR_SPAN - 1).toLong())
         val hourKeys = (0 until HOUR_SPAN).map { hourStart.plusHours(it.toLong()).format(HOUR_KEY_FMT) }
         val dayKeys = (0 until dayCount).map { heatmapStart.plusDays(it.toLong()).toString() }
-        val weekStart = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        val weekKeys = (0 until WEEK_SPAN).map { weekStart.minusWeeks((WEEK_SPAN - 1 - it).toLong()).toString() }
-        val monthStart = today.withDayOfMonth(1)
-        val monthKeys = (0 until MONTH_SPAN).map { monthStart.minusMonths((MONTH_SPAN - 1 - it).toLong()).format(MONTH_KEY_FMT) }
+        val monthStart = today.withDayOfMonth(1).minusMonths((MONTH_SPAN - 1).toLong())
+        val monthKeys = (0 until MONTH_SPAN).map { monthStart.plusMonths(it.toLong()).format(MONTH_KEY_FMT) }
 
         val loaded = withContext(Dispatchers.IO) {
             coroutineScope {
-                // 天颗粒度直接用热力图区间，一份数据同时供热力图着色 / 点击详情 / 天曲线
+                // 天颗粒度一次取满热力图区间：同时供热力图着色 / 点击详情 / 近 7 天 / 近 30 天曲线
                 val dayRows = async { messageNodeDAO.getTokenBuckets(StatsBucket.DAY, heatmapStart.toString()) }
-                val hourRows = async { messageNodeDAO.getTokenBuckets(StatsBucket.HOUR, hourStart.format(HOUR_KEY_FMT)) }
-                val weekRows = async { messageNodeDAO.getTokenBuckets(StatsBucket.WEEK, weekKeys.first()) }
+                val hourRows = async { messageNodeDAO.getTokenBuckets(StatsBucket.HOUR, hourKeys.first()) }
                 val monthRows = async { messageNodeDAO.getTokenBuckets(StatsBucket.MONTH, monthKeys.first()) }
                 val hour7Rows = async { messageNodeDAO.getHourUsageProfile(today.minusDays(6).toString()) }
                 val hour30Rows = async { messageNodeDAO.getHourUsageProfile(today.minusDays(29).toString()) }
@@ -171,7 +172,7 @@ class StatsVM(
                     .flatMap { it.models }
                     .associate { it.id.toString() to it.displayName }
 
-                val daySeries = buildSeries(dayKeys, dayRows.await(), StatsGranularity.DAY, locale)
+                val daySeries = buildSeries(dayKeys, dayRows.await(), StatsBucket.DAY, locale)
                 val tokensPerDay = daySeries.mapNotNull { point ->
                     runCatching { LocalDate.parse(point.key) }.getOrNull()?.let { it to point }
                 }.toMap()
@@ -194,10 +195,10 @@ class StatsVM(
                         .toMap(),
                     tokensPerDay = tokensPerDay,
                     series = mapOf(
-                        StatsGranularity.HOUR to buildSeries(hourKeys, hourRows.await(), StatsGranularity.HOUR, locale),
-                        StatsGranularity.DAY to daySeries,
-                        StatsGranularity.WEEK to buildSeries(weekKeys, weekRows.await(), StatsGranularity.WEEK, locale),
-                        StatsGranularity.MONTH to buildSeries(monthKeys, monthRows.await(), StatsGranularity.MONTH, locale),
+                        StatsRange.HOURS_24 to buildSeries(hourKeys, hourRows.await(), StatsBucket.HOUR, locale),
+                        StatsRange.DAYS_7 to daySeries.takeLast(7),
+                        StatsRange.DAYS_30 to daySeries.takeLast(30),
+                        StatsRange.MONTHS_12 to buildSeries(monthKeys, monthRows.await(), StatsBucket.MONTH, locale),
                     ),
                     hourProfile7 = hp7,
                     hourProfile30 = hp30,
@@ -231,7 +232,7 @@ class StatsVM(
     private fun buildSeries(
         keys: List<String>,
         rows: List<TokenBucketRow>,
-        granularity: StatsGranularity,
+        bucket: StatsBucket,
         locale: Locale,
     ): List<TokenPoint> {
         val byKey = rows.associateBy { it.bucket }
@@ -239,7 +240,7 @@ class StatsVM(
             val row = byKey[key]
             TokenPoint(
                 key = key,
-                label = labelFor(granularity, key, locale),
+                label = labelFor(bucket, key, locale),
                 prompt = row?.promptTokens ?: 0L,
                 completion = row?.completionTokens ?: 0L,
                 cached = row?.cachedTokens ?: 0L,
@@ -249,15 +250,15 @@ class StatsVM(
         }
     }
 
-    private fun labelFor(granularity: StatsGranularity, key: String, locale: Locale): String =
-        when (granularity) {
-            StatsGranularity.HOUR -> key.substringAfter('T', key) + ":00"
-            StatsGranularity.DAY, StatsGranularity.WEEK -> {
+    private fun labelFor(bucket: StatsBucket, key: String, locale: Locale): String =
+        when (bucket) {
+            StatsBucket.HOUR -> key.substringAfter('T', key) + ":00"
+            StatsBucket.DAY, StatsBucket.WEEK -> {
                 val date = runCatching { LocalDate.parse(key) }.getOrNull()
                 if (date == null) key else "${date.monthValue}/${date.dayOfMonth}"
             }
 
-            StatsGranularity.MONTH -> {
+            StatsBucket.MONTH -> {
                 val date = runCatching { LocalDate.parse("$key-01") }.getOrNull()
                 if (date == null) key else date.month.getDisplayName(TextStyle.SHORT, locale)
             }

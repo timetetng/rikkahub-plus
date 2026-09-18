@@ -76,7 +76,7 @@ fun StatsPage(vm: StatsVM = koinViewModel()) {
     // 图表状态提升到页面级：LazyColumn 回收 item 时不会丢失
     var heatmapMetric by remember { mutableStateOf(HeatmapMetric.MESSAGES) }
     var selectedDay by remember { mutableStateOf<LocalDate?>(null) }
-    var granularity by remember { mutableStateOf(StatsGranularity.DAY) }
+    var chartRange by remember { mutableStateOf(StatsRange.DAYS_7) }
     var metric by remember { mutableStateOf(TokenMetric.TOTAL) }
     var selectionStart by remember { mutableStateOf(0) }
     var selectionEnd by remember { mutableStateOf(-1) }
@@ -103,7 +103,7 @@ fun StatsPage(vm: StatsVM = koinViewModel()) {
                 CircularProgressIndicator()
             }
         } else {
-            val points = stats.series[granularity].orEmpty()
+            val points = stats.series[chartRange].orEmpty()
             val selection = when {
                 selectionEnd >= selectionStart &&
                     selectionStart in points.indices &&
@@ -132,9 +132,9 @@ fun StatsPage(vm: StatsVM = koinViewModel()) {
                         points = points,
                         metric = metric,
                         onMetricChange = { metric = it },
-                        granularity = granularity,
-                        onGranularityChange = {
-                            granularity = it
+                        range = chartRange,
+                        onRangeChange = {
+                            chartRange = it
                             selectionStart = 0
                             selectionEnd = -1
                         },
@@ -424,8 +424,8 @@ private fun TokenTrendCard(
     points: List<TokenPoint>,
     metric: TokenMetric,
     onMetricChange: (TokenMetric) -> Unit,
-    granularity: StatsGranularity,
-    onGranularityChange: (StatsGranularity) -> Unit,
+    range: StatsRange,
+    onRangeChange: (StatsRange) -> Unit,
     selection: IntRange?,
     onSelectionChange: (IntRange) -> Unit,
     modifier: Modifier = Modifier,
@@ -454,9 +454,9 @@ private fun TokenTrendCard(
                     text = stringResource(R.string.stats_page_token_trend),
                     style = MaterialTheme.typography.titleMedium,
                 )
-                GranularitySelector(
-                    current = granularity,
-                    onSelect = onGranularityChange,
+                RangeSelector(
+                    current = range,
+                    onSelect = onRangeChange,
                 )
             }
 
@@ -502,15 +502,15 @@ private fun TokenTrendCard(
 }
 
 @Composable
-private fun GranularitySelector(
-    current: StatsGranularity,
-    onSelect: (StatsGranularity) -> Unit,
+private fun RangeSelector(
+    current: StatsRange,
+    onSelect: (StatsRange) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         AssistChip(
             onClick = { expanded = true },
-            label = { Text(stringResource(granularityLabelRes(current))) },
+            label = { Text(stringResource(rangeLabelRes(current))) },
             trailingIcon = {
                 Icon(
                     imageVector = HugeIcons.ArrowDown01,
@@ -523,9 +523,9 @@ private fun GranularitySelector(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
-            StatsGranularity.entries.forEach { option ->
+            StatsRange.entries.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(stringResource(granularityLabelRes(option))) },
+                    text = { Text(stringResource(rangeLabelRes(option))) },
                     onClick = {
                         expanded = false
                         onSelect(option)
@@ -895,11 +895,11 @@ private fun EmptyHint() {
 
 // ─────────────────────────── 工具函数 ───────────────────────────
 
-private fun granularityLabelRes(granularity: StatsGranularity): Int = when (granularity) {
-    StatsGranularity.HOUR -> R.string.stats_granularity_hour
-    StatsGranularity.DAY -> R.string.stats_granularity_day
-    StatsGranularity.WEEK -> R.string.stats_granularity_week
-    StatsGranularity.MONTH -> R.string.stats_granularity_month
+private fun rangeLabelRes(range: StatsRange): Int = when (range) {
+    StatsRange.HOURS_24 -> R.string.stats_range_hours_24
+    StatsRange.DAYS_7 -> R.string.stats_range_days_7
+    StatsRange.DAYS_30 -> R.string.stats_range_days_30
+    StatsRange.MONTHS_12 -> R.string.stats_range_months_12
 }
 
 private fun metricLabelRes(metric: TokenMetric): Int = when (metric) {
