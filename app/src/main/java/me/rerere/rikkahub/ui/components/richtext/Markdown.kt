@@ -1200,7 +1200,7 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
                 )
                 if (drawables.isEmpty()) {
                     // 拆分失败时回退为单体内联渲染
-                    appendInlineContent(formula, latexPlaceholder(formula))
+                    appendInlineContent(formula, latexPlaceholder(latexCopySource(formula)))
                     val (width, height) = with(density) {
                         assumeLatexSize(
                             latex = formula, fontSize = fontSizePx
@@ -1224,7 +1224,10 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
                         // 段间插入零宽空格，提供换行点
                         if (index > 0) append('\u200B')
                         val key = "latex:${formula.hashCode()}:$index"
-                        appendInlineContent(key, latexPlaceholder(formula))
+                        appendInlineContent(
+                            key,
+                            if (index == 0) latexPlaceholder(latexCopySource(formula)) else "\u200B"
+                        )
                         val (width, height) = with(density) {
                             drawable.bounds.width().toSp() to drawable.bounds.height().toSp()
                         }
@@ -1238,7 +1241,7 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
                                     LatexDrawable(
                                         drawable = drawable,
                                         modifier = latexCopyModifier(
-                                            LocalContext.current, formula
+                                            LocalContext.current, latexCopySource(formula)
                                         )
                                     )
                                 })

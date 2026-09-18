@@ -26,7 +26,7 @@ fun MathInline(
         latex = proceededLatex,
         color = LocalContentColor.current,
         fontSize = fontSize.takeOrElse { LocalTextStyle.current.fontSize },
-        modifier = modifier.then(latexCopyModifier(LocalContext.current, proceededLatex)),
+        modifier = modifier.then(latexCopyModifier(LocalContext.current, latexCopySource(proceededLatex))),
     )
 }
 
@@ -49,7 +49,7 @@ fun MathBlock(
                 .horizontalScroll(
                     rememberScrollState()
                 )
-                .then(latexCopyModifier(LocalContext.current, proceededLatex)),
+                .then(latexCopyModifier(LocalContext.current, latexCopySource(proceededLatex, display = true))),
         )
     }
 }

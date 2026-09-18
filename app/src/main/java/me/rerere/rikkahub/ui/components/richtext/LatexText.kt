@@ -129,6 +129,18 @@ fun splitLatex(
 fun latexPlaceholder(latex: String): String = latex.ifBlank { "[Latex]" }
 
 /**
+ * 复制/选中用的完整 LaTeX 源码：把定界符补回来。
+ *
+ * 占位文本才是选择与复制真正拿到的东西，只给公式正文的话粘到别处还得手动补 `$`；
+ * 所以行内包 `$…$`、块级包 `$$…$$`。渲染走 [processLatex]（它会剥掉定界符），
+ * 重复包裹是幂等的，调用点不必区分来源写法。
+ */
+fun latexCopySource(latex: String, display: Boolean = false): String {
+    val body = processLatex(latex)
+    return if (display) "${'$'}${'$'}\n$body\n${'$'}${'$'}" else "${'$'}$body${'$'}"
+}
+
+/**
  * 长按公式就把 LaTeX 原文写进剪贴板。
  *
  * 公式是 Canvas 画出来的，长按命中的是 InlineContent 的占位文本；与其让用户拖选区再复制，
