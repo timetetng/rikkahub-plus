@@ -600,7 +600,7 @@ private fun HourProfileCard(stats: AppStats, modifier: Modifier = Modifier) {
                 Text(
                     text = stringResource(
                         R.string.stats_hour_avg_messages,
-                        "%.1f".format(counts.getOrElse(peakHour) { 0f }),
+                        counts.getOrElse(peakHour) { 0f },
                     ),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
