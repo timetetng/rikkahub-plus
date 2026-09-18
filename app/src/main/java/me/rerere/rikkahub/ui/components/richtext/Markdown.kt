@@ -129,6 +129,24 @@ private val CODE_BLOCK_REGEX = Regex("```[\\s\\S]*?```|`[^`\n]*`", RegexOption.D
 private val BREAK_LINE_REGEX = Regex("(?i)<br\\s*/?>")
 private val LATEX_BLOCK_LINE_BREAK_REGEX = Regex("""[ \t]*\r?\n[ \t]*""")
 
+// 表格行里数学段中的裸竖线：GFM 表格把它当单元格分隔符，$|a|$ 会被切成三格、公式退化成源码。
+// 改写成语义相同的 \vert（引擎不支持 \lvert）；已转义的 \| 本就不切格，保持原样。
+// \vert 后必须留一个空格：数学模式忽略空格，不留则 \verta 会被当成未定义宏。
+private val TABLE_ROW_REGEX = Regex("(?m)^[ \\t]*\\|.*${'$'}")
+private val MATH_SPAN_REGEX = Regex("${'$'}[^${'$'}\\n]+${'$'}")
+private val BARE_PIPE_REGEX = Regex("(?<!\\\\)\\|")
+
+internal fun escapeTableMathPipes(content: String, isInCodeBlock: (Int) -> Boolean): String =
+    TABLE_ROW_REGEX.replace(content) { row ->
+        if (isInCodeBlock(row.range.first)) {
+            row.value
+        } else {
+            MATH_SPAN_REGEX.replace(row.value) { span ->
+                BARE_PIPE_REGEX.replace(span.value) { "\\vert " }
+            }
+        }
+    }
+
 // 预处理markdown内容
 private fun preProcess(content: String): String {
     // 先找出所有代码块的位置
@@ -162,6 +180,8 @@ private fun preProcess(content: String): String {
             "$$" + formula + "$$"
         }
     }
+
+    result = escapeTableMathPipes(result) { pos -> isInCodeBlock(pos) }
 
     return result
 }
