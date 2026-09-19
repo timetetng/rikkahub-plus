@@ -432,9 +432,9 @@ private fun TokenTrendCard(
 ) {
     val values = remember(points, metric) { points.map { it.value(metric) } }
     val labels = remember(points) { points.map { it.label } }
-    val range = selection?.takeIf { it.last < points.size }
-    val rangeTotal = remember(points, metric, range) {
-        if (range == null) 0L else points.subList(range.first, range.last + 1).sumOf { it.valueLong(metric) }
+    val selectedRange = selection?.takeIf { it.last < points.size }
+    val rangeTotal = remember(points, metric, selectedRange) {
+        if (selectedRange == null) 0L else points.subList(selectedRange.first, selectedRange.last + 1).sumOf { it.valueLong(metric) }
     }
 
     Card(
@@ -472,10 +472,10 @@ private fun TokenTrendCard(
 
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = if (range == null || (range.first == 0 && range.last == points.lastIndex)) {
+                    text = if (selectedRange == null || (selectedRange.first == 0 && selectedRange.last == points.lastIndex)) {
                         stringResource(R.string.stats_range_all)
                     } else {
-                        "${points[range.first].label} – ${points[range.last].label}"
+                        "${points[selectedRange.first].label} – ${points[selectedRange.last].label}"
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -493,7 +493,7 @@ private fun TokenTrendCard(
                 SmoothAreaChart(
                     values = values,
                     labels = labels,
-                    selection = range,
+                    selection = selectedRange,
                     onSelectionChange = onSelectionChange,
                 )
             }
