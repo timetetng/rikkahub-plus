@@ -91,6 +91,7 @@ import me.rerere.rikkahub.data.ai.transformers.DocumentAsPromptTransformer
 import me.rerere.rikkahub.data.ai.transformers.OcrTransformer
 import me.rerere.rikkahub.data.ai.transformers.PlaceholderTransformer
 import me.rerere.rikkahub.data.ai.transformers.PromptInjectionTransformer
+import me.rerere.rikkahub.data.ai.transformers.TavernRegexInputTransformer
 import me.rerere.rikkahub.data.ai.transformers.RegexOutputTransformer
 import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
 import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
@@ -161,6 +162,9 @@ private val inputTransformers by lazy {
         PromptInjectionTransformer,
         AuthorsNoteTransformer,
         PlaceholderTransformer,
+        // 酒馆模式下的输入侧正则：必须在宏之后（官方语义是先宏后正则）；
+        // 非酒馆模式内部直接返回原列表，不影响旧行为
+        TavernRegexInputTransformer,
         DocumentAsPromptTransformer,
         OcrTransformer,
         SkillAutoTriggerTransformer,

@@ -203,6 +203,146 @@ fun String.replaceRegexes(
     }
 }
 
+/**
+ * 酒馆语义的正则替换（对齐 RegexScriptData）。
+ *
+ * 与 [replaceRegexes] 的区别：
+ * - 按 [RegexTarget] × [RegexView] 分区，而不是粗粒度的 USER/ASSISTANT + visualOnly
+ * - 支持 `trimRegex`：每次匹配先做字符串移除，结果再参与 `{{match}}` / `$&`
+ * - 支持 `macroMode`：只影响 findRegex（`none` 按宏原文查 / `raw` 先展开 / `escaped` 展开后转义）
+ * - 支持 `minDepth` / `maxDepth`：只对 userInput / aiOutput 生效
+ *
+ * 语义顺序固定为「先宏，再正则」，与 fast-tavern 一致。
+ *
+ * @param depth 该消息距末尾的深度（0 = 最后一条）；null 表示不受深度限制
+ * @param macros 宏表（至少给 user / char），用于 macroMode 与替换结果
+ */
+fun String.replaceRegexesTavern(
+    assistant: Assistant?,
+    target: RegexTarget,
+    view: RegexView,
+    depth: Int? = null,
+    macros: Map<String, String> = emptyMap(),
+): String {
+    if (assistant == null) return this
+    if (assistant.regexes.isEmpty()) return this
+    val depthApplies = target == RegexTarget.USER_INPUT || target == RegexTarget.AI_OUTPUT
+    return assistant.regexes.fold(this) { acc, rule ->
+        if (!rule.enabled) return@fold acc
+        if (target !in rule.effectiveTargets) return@fold acc
+        if (view !in rule.effectiveViews) return@fold acc
+        if (depth != null && depthApplies) {
+            rule.minDepth?.let { if (depth < it) return@fold acc }
+            rule.maxDepth?.let { if (depth > it) return@fold acc }
+        }
+        applyTavernRegex(acc, rule, macros)
+    }
+}
+
+/** 展开 `{{key}}` 宏（大小写不敏感）。酒馆里替换结果中的宏是「立即执行」的。 */
+private fun expandSimpleMacros(text: String, macros: Map<String, String>): String {
+    if (macros.isEmpty() || !text.contains("{")) return text
+    var out = text
+    for ((k, v) in macros) {
+        out = out.replace("{{" + k + "}}", v, ignoreCase = true)
+    }
+    return out
+}
+
+private fun applyTavernRegex(
+    input: String,
+    rule: AssistantRegex,
+    macros: Map<String, String>,
+): String {
+    // macroMode 只影响 findRegex
+    val pattern = when (rule.macroMode) {
+        RegexMacroMode.NONE -> rule.findRegex
+        RegexMacroMode.RAW -> expandSimpleMacros(rule.findRegex, macros)
+        RegexMacroMode.ESCAPED -> Regex.escape(expandSimpleMacros(rule.findRegex, macros))
+    }
+
+    val compiled = compileRegexCached(pattern)
+    if (compiled == null) {
+        // 编译失败：尝试变长 lookbehind 模拟（Java 正则不支持，而酒馆卡里很常见）
+        return VariableLookbehind.replace(input, pattern, rule.replaceString) ?: input
+    }
+
+    // 不能用 Regex.replace：`{{match}}`/`$&` 要求的是**trim 之后**的匹配，
+    // 内置 replace 拿不到这个值，只能手动遍历
+    val out = StringBuilder()
+    var last = 0
+    var hit = false
+    for (m in compiled.findAll(input)) {
+        hit = true
+        var matched = m.value
+        for (t in rule.trimRegex) {
+            if (t.isNotEmpty()) matched = matched.replace(t, "")
+        }
+        out.append(input, last, m.range.first)
+        out.append(renderTavernReplacement(rule.replaceString, m, matched, macros))
+        last = m.range.last + 1
+    }
+    if (!hit) return input
+    out.append(input, last, input.length)
+    return out.toString()
+}
+
+/**
+ * 渲染替换模板：
+ * - `{{match}}` / `$&` → **trim 之后**的匹配
+ * - `$1..$99` / `${name}` → 捕获组（不做 trim）
+ * - 结果里的宏立即展开
+ */
+private fun renderTavernReplacement(
+    template: String,
+    m: MatchResult,
+    trimmed: String,
+    macros: Map<String, String>,
+): String {
+    val sb = StringBuilder()
+    var i = 0
+    while (i < template.length) {
+        val c = template[i]
+        when {
+            template.startsWith("{{match}}", i, ignoreCase = true) -> {
+                sb.append(trimmed)
+                i += "{{match}}".length
+            }
+
+            c == '$' && i + 1 < template.length && template[i + 1] == '&' -> {
+                sb.append(trimmed)
+                i += 2
+            }
+
+            c == '$' && i + 1 < template.length && template[i + 1] == '{' -> {
+                val close = template.indexOf('}', i)
+                if (close > 0) {
+                    val name = template.substring(i + 2, close)
+                    sb.append(m.groups[name]?.value ?: "")
+                    i = close + 1
+                } else {
+                    sb.append('$')
+                    i++
+                }
+            }
+
+            c == '$' && i + 1 < template.length && template[i + 1].isDigit() -> {
+                var j = i + 1
+                while (j < template.length && template[j].isDigit()) j++
+                val g = template.substring(i + 1, j).toIntOrNull() ?: 0
+                sb.append(m.groupValues.getOrElse(g) { "" })
+                i = j
+            }
+
+            else -> {
+                sb.append(c)
+                i++
+            }
+        }
+    }
+    return expandSimpleMacros(sb.toString(), macros)
+}
+
 private fun replaceWithRegex(input: String, regex: AssistantRegex): String {
     val compiled = compileRegexCached(regex.findRegex)
     // 官方酒馆：替换字符串里的 {{match}}（不区分大小写）= 当前完整匹配，等价 $0

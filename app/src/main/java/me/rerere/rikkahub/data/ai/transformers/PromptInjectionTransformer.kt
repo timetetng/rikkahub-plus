@@ -158,7 +158,7 @@ internal fun transformMessages(
                 userName = userName,
                 // 系统消息（工具 prompt / 用户上下文）由 GenerationHandler 前置，不算对话历史
                 history = messages.filter { it.role != MessageRole.SYSTEM },
-                exampleMessages = buildExampleMessages(assistant, userName),
+                exampleMessages = assistant.buildExampleMessages(userName),
                 worldSlots = slots,
                 postHistoryInstructions = assistant.tavernData?.postHistoryInstructions.orEmpty(),
             )
