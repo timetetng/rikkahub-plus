@@ -79,6 +79,7 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.replaceRegexes
+import me.rerere.rikkahub.data.model.replaceIdentityMacros
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
 import me.rerere.rikkahub.ui.components.richtext.ZoomableAsyncImage
 import me.rerere.rikkahub.ui.components.richtext.buildMarkdownPreviewHtml
@@ -294,6 +295,10 @@ private fun MessagePartsBlock(
     // 消息输出HapticFeedback
     val hapticFeedback = LocalHapticFeedback.current
     val settings = LocalSettings.current
+    // 显示侧身份宏替换用的两个名字。默认值与发送侧（PlaceholderTransformer 的 user/char 占位符）保持一致，
+    // 否则会出现“气泡里叫小明、发给模型叫 user”这类不一致。
+    val displayUserName = settings.displaySetting.userNickname.ifBlank { "user" }
+    val displayCharName = assistant?.name?.ifBlank { "assistant" } ?: "assistant"
     val partsState by rememberUpdatedState(parts)
 
     val handleClickCitation: (String) -> Unit = remember {
@@ -387,11 +392,14 @@ private fun MessagePartsBlock(
                                 ) {
                                     Column(modifier = Modifier.padding(8.dp)) {
                                         MarkdownBlock(
-                                            content = part.text.replaceRegexes(
-                                                assistant = assistant,
-                                                scope = AssistantAffectScope.USER,
-                                                visual = true,
-                                            ),
+                                            content = part.text
+                                                // 先宏后正则（官方语义）
+                                                .replaceIdentityMacros(displayUserName, displayCharName)
+                                                .replaceRegexes(
+                                                    assistant = assistant,
+                                                    scope = AssistantAffectScope.USER,
+                                                    visual = true,
+                                                ),
                                             onClickCitation = handleClickCitation
                                         )
                                     }
@@ -405,22 +413,26 @@ private fun MessagePartsBlock(
                                     ) {
                                         Column(modifier = Modifier.padding(8.dp)) {
                                             MarkdownBlock(
-                                                content = part.text.replaceRegexes(
-                                                    assistant = assistant,
-                                                    scope = AssistantAffectScope.ASSISTANT,
-                                                    visual = true,
-                                                ),
+                                                content = part.text
+                                                    .replaceIdentityMacros(displayUserName, displayCharName)
+                                                    .replaceRegexes(
+                                                        assistant = assistant,
+                                                        scope = AssistantAffectScope.ASSISTANT,
+                                                        visual = true,
+                                                    ),
                                                 onClickCitation = handleClickCitation,
                                             )
                                         }
                                     }
                                 } else {
                                     MarkdownBlock(
-                                        content = part.text.replaceRegexes(
-                                            assistant = assistant,
-                                            scope = AssistantAffectScope.ASSISTANT,
-                                            visual = true,
-                                        ),
+                                        content = part.text
+                                            .replaceIdentityMacros(displayUserName, displayCharName)
+                                            .replaceRegexes(
+                                                assistant = assistant,
+                                                scope = AssistantAffectScope.ASSISTANT,
+                                                visual = true,
+                                            ),
                                         onClickCitation = handleClickCitation,
                                         modifier = Modifier
                                             .animateContentSize()
