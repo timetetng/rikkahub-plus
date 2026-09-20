@@ -300,12 +300,49 @@ object PromptAssembler {
     // ────────────────────────────────────────────────────────
 
     /** TaggedItem → UIMessage。历史条目保留原对象（parts / 工具调用 / 多模态），其余按 role+text 造 */
-    fun toMessages(tagged: List<TaggedItem>): List<UIMessage> = tagged.map { item ->
-        item.origin ?: UIMessage(
-            role = item.role,
-            parts = listOf(UIMessagePart.Text(item.text)),
-            annotations = item.annotations,
-        )
+    /**
+     * TaggedItem 列表 → UIMessage 列表。
+     *
+     * ⚠️ `squash_system_messages`（ST 预设默认 true，TGbreak 里确实是 true）：
+     * **相邻的 system 块必须合并成一条**。不合并时会发出几十条独立 system 消息，
+     * deepseek 这类模型会把每条 system 当成独立“轮次”，症状是：
+     *   · 不遵守扮演规则、把正文写进原生思维链
+     *   · 回显 `</interaction_record>` 这类没有开始标签的提示词闭合标签
+     *   · 完全不像酒馆里的效果
+     * 合并后与 ST 的发送结构一致。
+     */
+    fun toMessages(tagged: List<TaggedItem>): List<UIMessage> {
+        val out = ArrayList<UIMessage>(tagged.size)
+        val sysBuf = StringBuilder()
+        var sysAnnotations: List<UIMessageAnnotation> = emptyList()
+
+        fun flushSystem() {
+            if (sysBuf.length == 0) return
+            out += UIMessage(
+                role = MessageRole.SYSTEM,
+                parts = listOf(UIMessagePart.Text(sysBuf.toString())),
+                annotations = sysAnnotations,
+            )
+            sysBuf.setLength(0)
+            sysAnnotations = emptyList()
+        }
+
+        for (item in tagged) {
+            if (item.role == MessageRole.SYSTEM) {
+                if (sysBuf.length > 0) sysBuf.append("\n\n")
+                sysBuf.append(item.text)
+                if (sysAnnotations.isEmpty()) sysAnnotations = item.annotations
+            } else {
+                flushSystem()
+                out += item.origin ?: UIMessage(
+                    role = item.role,
+                    parts = listOf(UIMessagePart.Text(item.text)),
+                    annotations = item.annotations,
+                )
+            }
+        }
+        flushSystem()
+        return out
     }
 
     /** 供 GenerationHandler 判定的「是否要走酒馆装配」 */
