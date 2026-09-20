@@ -46,6 +46,7 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
+import me.rerere.rikkahub.data.model.resolveRegexes
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
 import me.rerere.rikkahub.ui.components.ui.ChainOfThoughtScope
 import me.rerere.rikkahub.ui.context.LocalSettings
@@ -167,10 +168,16 @@ private fun ReasoningContent(
                 }
             }
     ) {
+        // 思考过程同样走三层正则（预设里的“思维链隐藏”就是冲着这里来的）
+        val reasoningRules = resolveRegexes(
+            assistant,
+            LocalSettings.current.promptPresets,
+            LocalSettings.current.globalRegexes,
+        )
         val reasoningContent = @Composable {
             MarkdownBlock(
                 content = reasoning.reasoning.replaceRegexes(
-                    assistant = assistant,
+                    rules = reasoningRules,
                     scope = AssistantAffectScope.ASSISTANT,
                     visual = true,
                 ),

@@ -7,6 +7,7 @@ import me.rerere.rikkahub.data.ai.prompts.PromptAssembler
 import me.rerere.rikkahub.data.model.RegexTarget
 import me.rerere.rikkahub.data.model.RegexView
 import me.rerere.rikkahub.data.model.replaceRegexesTavern
+import me.rerere.rikkahub.data.model.resolveRegexes
 
 /**
  * 酒馆模式下的输入侧正则（发送侧，view = model）。
@@ -26,8 +27,15 @@ object TavernRegexInputTransformer : InputMessageTransformer {
         messages: List<UIMessage>,
     ): List<UIMessage> {
         val assistant = ctx.assistant
-        if (!PromptAssembler.isActive(assistant)) return messages
-        if (assistant.regexes.isEmpty()) return messages
+        // 全局正则（设置里的正则库）跨助手生效，不属于酒馆模式；
+        // 预设层与助手/卡内层走这套按 target 分区的酒馆执行器，只在酒馆模式开启。
+        // 这样非酒馆用户的旧行为不受影响（全局库默认为空）。
+        val rules = if (PromptAssembler.isActive(assistant)) {
+            resolveRegexes(assistant, ctx.settings.promptPresets, ctx.settings.globalRegexes)
+        } else {
+            ctx.settings.globalRegexes
+        }
+        if (rules.isEmpty()) return messages
 
         val macros = mapOf(
             "user" to ctx.settings.displaySetting.userNickname.ifBlank { "User" },
@@ -53,7 +61,7 @@ object TavernRegexInputTransformer : InputMessageTransformer {
                     when (part) {
                         is UIMessagePart.Text -> part.copy(
                             text = part.text.replaceRegexesTavern(
-                                assistant = assistant,
+                                rules = rules,
                                 target = target,
                                 view = RegexView.MODEL,
                                 depth = depth,
@@ -63,7 +71,7 @@ object TavernRegexInputTransformer : InputMessageTransformer {
 
                         is UIMessagePart.Reasoning -> part.copy(
                             reasoning = part.reasoning.replaceRegexesTavern(
-                                assistant = assistant,
+                                rules = rules,
                                 target = RegexTarget.REASONING,
                                 view = RegexView.MODEL,
                                 depth = null,

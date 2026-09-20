@@ -80,6 +80,7 @@ import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.data.model.replaceIdentityMacros
+import me.rerere.rikkahub.data.model.resolveRegexes
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
 import me.rerere.rikkahub.ui.components.richtext.ZoomableAsyncImage
 import me.rerere.rikkahub.ui.components.richtext.buildMarkdownPreviewHtml
@@ -299,6 +300,10 @@ private fun MessagePartsBlock(
     // 否则会出现“气泡里叫小明、发给模型叫 user”这类不一致。
     val displayUserName = settings.displaySetting.userNickname.ifBlank { "user" }
     val displayCharName = assistant?.name?.ifBlank { "assistant" } ?: "assistant"
+    // 显示侧同样要走三层正则（全局 → 预设 → 助手/卡内），否则预设里的“思维链隐藏”等只影响发送侧，气泡里还看得到
+    val displayRegexRules = remember(assistant, settings.promptPresets, settings.globalRegexes) {
+        resolveRegexes(assistant, settings.promptPresets, settings.globalRegexes)
+    }
     val partsState by rememberUpdatedState(parts)
 
     val handleClickCitation: (String) -> Unit = remember {
@@ -396,7 +401,7 @@ private fun MessagePartsBlock(
                                                 // 先宏后正则（官方语义）
                                                 .replaceIdentityMacros(displayUserName, displayCharName)
                                                 .replaceRegexes(
-                                                    assistant = assistant,
+                                                    rules = displayRegexRules,
                                                     scope = AssistantAffectScope.USER,
                                                     visual = true,
                                                 ),
@@ -416,7 +421,7 @@ private fun MessagePartsBlock(
                                                 content = part.text
                                                     .replaceIdentityMacros(displayUserName, displayCharName)
                                                     .replaceRegexes(
-                                                        assistant = assistant,
+                                                        rules = displayRegexRules,
                                                         scope = AssistantAffectScope.ASSISTANT,
                                                         visual = true,
                                                     ),
@@ -429,7 +434,7 @@ private fun MessagePartsBlock(
                                         content = part.text
                                             .replaceIdentityMacros(displayUserName, displayCharName)
                                             .replaceRegexes(
-                                                assistant = assistant,
+                                                rules = displayRegexRules,
                                                 scope = AssistantAffectScope.ASSISTANT,
                                                 visual = true,
                                             ),

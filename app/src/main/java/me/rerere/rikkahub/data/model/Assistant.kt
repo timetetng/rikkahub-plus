@@ -191,10 +191,21 @@ fun String.replaceRegexes(
     assistant: Assistant?,
     scope: AssistantAffectScope,
     visual: Boolean = false
+): String = replaceRegexes(assistant?.regexes.orEmpty(), scope, visual)
+
+/**
+ * 用**给定的一组**正则替换。
+ *
+ * 三层正则会先经 `resolveRegexes()` 合并（全局 → 预设 → 助手/卡内）再传进来，
+ * 所以这里不再关心一条正则的来源。
+ */
+fun String.replaceRegexes(
+    rules: List<AssistantRegex>,
+    scope: AssistantAffectScope,
+    visual: Boolean = false
 ): String {
-    if (assistant == null) return this
-    if (assistant.regexes.isEmpty()) return this
-    return assistant.regexes.fold(this) { acc, regex ->
+    if (rules.isEmpty()) return this
+    return rules.fold(this) { acc, regex ->
         if (regex.enabled && regex.visualOnly == visual && regex.affectingScope.contains(scope)) {
             replaceWithRegex(acc, regex)
         } else {
@@ -223,11 +234,19 @@ fun String.replaceRegexesTavern(
     view: RegexView,
     depth: Int? = null,
     macros: Map<String, String> = emptyMap(),
+): String = replaceRegexesTavern(assistant?.regexes.orEmpty(), target, view, depth, macros)
+
+/** 用**给定的一组**正则按酒馆语义替换（三层合并后调用，见 `resolveRegexes()`） */
+fun String.replaceRegexesTavern(
+    rules: List<AssistantRegex>,
+    target: RegexTarget,
+    view: RegexView,
+    depth: Int? = null,
+    macros: Map<String, String> = emptyMap(),
 ): String {
-    if (assistant == null) return this
-    if (assistant.regexes.isEmpty()) return this
+    if (rules.isEmpty()) return this
     val depthApplies = target == RegexTarget.USER_INPUT || target == RegexTarget.AI_OUTPUT
-    return assistant.regexes.fold(this) { acc, rule ->
+    return rules.fold(this) { acc, rule ->
         if (!rule.enabled) return@fold acc
         if (target !in rule.effectiveTargets) return@fold acc
         if (view !in rule.effectiveViews) return@fold acc

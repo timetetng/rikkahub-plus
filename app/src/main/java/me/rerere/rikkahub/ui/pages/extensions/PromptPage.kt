@@ -134,7 +134,7 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 @Composable
 fun PromptPage(vm: PromptVM = koinViewModel()) {
     val settings by vm.settings.collectAsStateWithLifecycle()
-    val pagerState = rememberPagerState { 2 }
+    val pagerState = rememberPagerState { 4 }
     val scope = rememberCoroutineScope()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
@@ -163,6 +163,22 @@ fun PromptPage(vm: PromptVM = koinViewModel()) {
                     icon = { Icon(HugeIcons.Book01, null) },
                     onClick = {
                         scope.launch { pagerState.animateScrollToPage(1) }
+                    }
+                )
+                NavigationBarItem(
+                    selected = pagerState.currentPage == 2,
+                    label = { Text("预设") },
+                    icon = { Icon(HugeIcons.Setting07, null) },
+                    onClick = {
+                        scope.launch { pagerState.animateScrollToPage(2) }
+                    }
+                )
+                NavigationBarItem(
+                    selected = pagerState.currentPage == 3,
+                    label = { Text("正则") },
+                    icon = { Icon(HugeIcons.Tools, null) },
+                    onClick = {
+                        scope.launch { pagerState.animateScrollToPage(3) }
                     }
                 )
             }
@@ -195,6 +211,16 @@ fun PromptPage(vm: PromptVM = koinViewModel()) {
                     },
                     settings = settings,
                     onSettingsUpdate = { vm.updateSettings(it) }
+                )
+
+                2 -> TavernPresetTab(
+                    settings = settings,
+                    onSettingsUpdate = { vm.updateSettings(it) },
+                )
+
+                3 -> TavernRegexTab(
+                    settings = settings,
+                    onSettingsUpdate = { vm.updateSettings(it) },
                 )
             }
         }

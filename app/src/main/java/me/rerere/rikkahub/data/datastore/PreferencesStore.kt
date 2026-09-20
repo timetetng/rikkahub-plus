@@ -146,6 +146,7 @@ class SettingsStore(
         val MODE_INJECTIONS = stringPreferencesKey("mode_injections")
         val LOREBOOKS = stringPreferencesKey("lorebooks")
         val PROMPT_PRESETS = stringPreferencesKey("prompt_presets")   // 酒馆预设库（玩家导入，全局共享）
+        val GLOBAL_REGEXES = stringPreferencesKey("global_regexes")    // 全局正则库（跨助手/跨对话，执行顺序在预设层之前）
         val WORLD_INFO_BUDGET = intPreferencesKey("world_info_budget")
         val WORLD_INFO_BUDGET_CAP = intPreferencesKey("world_info_budget_cap")
         val WORLD_INFO_MIN_ACTIVATIONS = intPreferencesKey("world_info_min_activations")
@@ -266,6 +267,9 @@ class SettingsStore(
                     JsonInstant.decodeFromString(it)
                 } ?: emptyList(),
                 promptPresets = preferences[PROMPT_PRESETS]?.let {
+                    JsonInstant.decodeFromString(it)
+                } ?: emptyList(),
+                globalRegexes = preferences[GLOBAL_REGEXES]?.let {
                     JsonInstant.decodeFromString(it)
                 } ?: emptyList(),
                 // 官方 world_info_budget：世界书预算 = 上下文 token 的百分比（0-100，官方默认 25）
@@ -468,6 +472,7 @@ class SettingsStore(
             preferences[MODE_INJECTIONS] = JsonInstant.encodeToString(settings.modeInjections)
             preferences[LOREBOOKS] = JsonInstant.encodeToString(settings.lorebooks)
             preferences[PROMPT_PRESETS] = JsonInstant.encodeToString(settings.promptPresets)
+            preferences[GLOBAL_REGEXES] = JsonInstant.encodeToString(settings.globalRegexes)
             preferences[WORLD_INFO_BUDGET] = settings.worldInfoBudget
             preferences[WORLD_INFO_BUDGET_CAP] = settings.worldInfoBudgetCap
             preferences[WORLD_INFO_MIN_ACTIVATIONS] = settings.worldInfoMinActivations
@@ -658,6 +663,8 @@ data class Settings(
     val groupChats: List<GroupChat> = emptyList(),   // 群聊列表
     // 酒馆预设库（全局共享，助手通过 presetId 引用）；空时回退到内置默认预设
     val promptPresets: List<me.rerere.rikkahub.data.model.PromptPreset> = emptyList(),
+    // 全局正则库：跨助手/跨对话生效，执行顺序在预设正则之前（对齐酒馆的全局 Regex 扩展）
+    val globalRegexes: List<me.rerere.rikkahub.data.model.AssistantRegex> = emptyList(),
     val macroGlobalVariables: Map<String, String> = emptyMap(),        // 宏引擎全局变量（跨对话持久）
     val macroChatVariables: Map<String, Map<String, String>> = emptyMap(), // 宏引擎会话变量（conversationId → 变量）
     val webServerEnabled: Boolean = false,

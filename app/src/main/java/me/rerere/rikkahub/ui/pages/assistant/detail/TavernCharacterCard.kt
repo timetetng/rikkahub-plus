@@ -177,7 +177,8 @@ fun TavernModeCard(
                 onClick = { importLauncher.launch(arrayOf("application/json")) },
                 enabled = !importing && settings != null && onSettingsUpdate != null,
             ) {
-                Text(if (importing) "导入中…" else "导入预设 JSON")
+                // 预设是全局的（和世界书同级）：这里导入会写进共享库，不是只给本助手用
+                Text(if (importing) "导入中…" else "导入预设到全局库（同 扩展 → 预设）")
             }
 
             // 酒馆助手（TavernHelper）脚本本版不执行，但要明确告知，不能静默丢弃
@@ -275,6 +276,14 @@ fun TavernModeCard(
                 }
             }
 
+            // 正则三层合并总览（全局 / 预设 / 助手·卡内）
+            TavernRegexSection(
+                assistant = assistant,
+                settings = settings,
+                onAssistantUpdate = onAssistantUpdate,
+                onSettingsUpdate = onSettingsUpdate,
+            )
+
             if (assistant.tavernMode && bound == null) {
                 Text(
                     "未绑定预设：正在用内置默认骨架（main → 角色卡字段 → 世界书 → 示例 → 历史）。" +
@@ -347,6 +356,154 @@ private fun PresetPickerRow(
             )
         }
         RadioButton(selected = selected, onClick = onClick)
+    }
+}
+
+/**
+ * 正则三层合并总览 —— 对齐酒馆「全局 / 预设 / 角色卡」三处正则的来源管理。
+ *
+ * 列表顺序 = 实际执行顺序（全局 → 预设 → 助手/卡内），点一行切换启用，
+ * 改的是该条**所属层**里的那条（不会把预设正则在助手里再存一份）。
+ */
+@Composable
+private fun TavernRegexSection(
+    assistant: Assistant,
+    settings: Settings?,
+    onAssistantUpdate: (Assistant) -> Unit,
+    onSettingsUpdate: ((Settings) -> Unit)?,
+) {
+    // remember 放在早退之前：避免条件性调用 remember 导致 Composable 分组错位
+    var expanded by remember { mutableStateOf(false) }
+    val rxSettings = settings
+    val rxApply = onSettingsUpdate
+    val sourced = if (rxSettings != null) {
+        me.rerere.rikkahub.data.model.listSourcedRegexes(
+            assistant,
+            rxSettings.promptPresets,
+            rxSettings.globalRegexes,
+        )
+    } else {
+        emptyList()
+    }
+    if (sourced.isEmpty() || rxSettings == null || rxApply == null) return
+
+    val st = rxSettings
+    val ap = rxApply
+
+    val toggle: (me.rerere.rikkahub.data.model.SourcedRegex) -> Unit = { item ->
+        when (item.source) {
+            me.rerere.rikkahub.data.model.RegexSource.GLOBAL -> ap(
+                st.copy(
+                    globalRegexes = st.globalRegexes.map {
+                        if (it.id == item.regex.id) it.copy(enabled = !it.enabled) else it
+                    }
+                )
+            )
+
+            me.rerere.rikkahub.data.model.RegexSource.PRESET -> ap(
+                st.copy(
+                    promptPresets = st.promptPresets.map { preset ->
+                        if (preset.id != assistant.presetId) {
+                            preset
+                        } else {
+                            preset.copy(
+                                regexScripts = preset.regexScripts.map {
+                                    if (it.id == item.regex.id) it.copy(enabled = !it.enabled) else it
+                                }
+                            )
+                        }
+                    }
+                )
+            )
+
+            me.rerere.rikkahub.data.model.RegexSource.ASSISTANT -> onAssistantUpdate(
+                assistant.copy(
+                    regexes = assistant.regexes.map {
+                        if (it.id == item.regex.id) it.copy(enabled = !it.enabled) else it
+                    }
+                )
+            )
+        }
+    }
+
+    TextButton(onClick = { expanded = !expanded }) {
+        Text(
+            if (expanded) "收起正则列表"
+            else "正则（" + sourced.count { it.regex.enabled } + "/" + sourced.size + " 条启用）"
+        )
+    }
+    if (!expanded) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 420.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            "三层合并后按此顺序依次套用：全局 → 预设 → 助手/卡内。点一行切换启用；" +
+                "预设与卡内正则由导入得到，改的是它们原本所属的那一层。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
+        sourced.forEach { item ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { toggle(item) }
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (item.regex.enabled) "●" else "○",
+                    color = if (item.regex.enabled) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        item.regex.name.ifBlank {
+                            item.regex.externalId.ifBlank { "(未命名)" }
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        buildString {
+                            append("[").append(item.source.label).append("]")
+                            if (item.presetName.isNotBlank()) append(" ").append(item.presetName)
+                            append(" · ").append(
+                                item.regex.effectiveTargets.joinToString(",") { t ->
+                                    when (t) {
+                                        me.rerere.rikkahub.data.model.RegexTarget.USER_INPUT -> "userInput"
+                                        me.rerere.rikkahub.data.model.RegexTarget.AI_OUTPUT -> "aiOutput"
+                                        me.rerere.rikkahub.data.model.RegexTarget.SLASH_COMMANDS -> "slashCommands"
+                                        me.rerere.rikkahub.data.model.RegexTarget.WORLD_BOOK -> "worldBook"
+                                        me.rerere.rikkahub.data.model.RegexTarget.REASONING -> "reasoning"
+                                    }
+                                }
+                            )
+                            append(" · ").append(
+                                item.regex.effectiveViews.joinToString(",") { v -> v.name.lowercase() }
+                            )
+                            if (item.regex.trimRegex.isNotEmpty()) {
+                                append(" · trim").append(item.regex.trimRegex.size)
+                            }
+                            if (item.regex.macroMode != me.rerere.rikkahub.data.model.RegexMacroMode.NONE) {
+                                append(" · ").append(item.regex.macroMode.name.lowercase())
+                            }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
     }
 }
 
