@@ -238,7 +238,20 @@ class GenerationHandler(
         }
         addAll(tools)
     }
-    val statusTrackedTools = toolsInternal.map { tool ->
+    // ── 酒馆模式下**不发送工具**（2026-09-20 实测定性）──
+    // 酒馆卡（角色卡）是**假设没有工具**的：预设不会告诉模型“有工具可用”，
+    // 而一旦把工具定义发过去，模型很容易去调它们，进而掉进工具调用循环
+    // （totalStepsLimit 默认 256 → 每轮重发整个 prompt + 重跑装配）。
+    // 实测症状：“思维链跑完、准备输出时就卡着几分钟不动”，日志里能看到
+    //   delta: {"tool_calls":[{"function":{"arguments":" Exception"}}]}
+    // —— 模型在瞎调工具。
+    // 注意：工具**执行**仍走 toolsInternal，不受影响；需要工具的场景请关掉该助手的酒馆模式。
+    val sentTools = if (me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)) {
+        emptyList()
+    } else {
+        toolsInternal
+    }
+    val statusTrackedTools = sentTools.map { tool ->
         if (tool.name == "ask_user") tool else tool.copy(
             execute = { args ->
                 processingStatus.value = describeTool(tool.name)
