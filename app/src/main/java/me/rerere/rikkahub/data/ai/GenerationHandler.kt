@@ -699,7 +699,23 @@ class GenerationHandler(
             topP = assistant.topP,
             maxTokens = maxTokensOverride ?: assistant.maxTokens,
             tools = tools,
-            reasoningLevel = assistant.reasoningLevel,
+            // ── 酒馆模式下**不启用模型的原生思维链**（2026-09-21 定性）──
+            // 预设的 COT 是一套「让模型把思考写在正文里」的协议：
+            //   · tool_reasoning_mode = "disabled"（预设里就这么写的）
+            //   · cot-✔️原思维：「思考内容以"<think>…"开头」
+            // 而 rikkahub 默认把 assistant.reasoningLevel 原样发出去，林鹿溪是 auto、
+            // 模型 abilities 含 REASONING → 原生推理被打开。
+            // 一旦原生推理开了，模型就把思考放进 reasoning 通道，**正文里就不会再写 COT**；
+            // 严重时还会把正文写进思维链、把提示词片段当成思考内容。
+            // 这正是「同模型同卡同预设，ST 里效果完全不同」的原因 —— 差的是 API 参数，不是提示词。
+            // 修复：酒馆模式强制 OFF，把思维链“赶回”正文，交给预设的 <think> 协议。
+            reasoningLevel = if (
+                me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)
+            ) {
+                me.rerere.ai.core.ReasoningLevel.OFF
+            } else {
+                assistant.reasoningLevel
+            },
             customHeaders = buildList {
                 addAll(assistant.customHeaders)
                 addAll(model.customHeaders)
