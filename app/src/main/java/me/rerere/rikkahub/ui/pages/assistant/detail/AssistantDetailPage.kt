@@ -165,6 +165,17 @@ fun AssistantDetailPage(id: String) {
                     )
                 }
 
+                // 酒馆模式：预设驱动装配的开关与预设绑定
+                item {
+                    TavernModeCard(
+                        assistant = assistant,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                        onAssistantUpdate = { updated -> vm.update(updated) },
+                        settings = settings,
+                        onSettingsUpdate = { updated -> vm.updateSettings(updated) },
+                    )
+                }
+
                 // 开场白选择
                 item {
                     GreetingSelectorCard(

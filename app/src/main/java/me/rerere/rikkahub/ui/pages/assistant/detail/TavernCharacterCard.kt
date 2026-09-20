@@ -71,6 +71,188 @@ import me.rerere.rikkahub.ui.theme.CustomColors
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+
+/**
+ * 酒馆模式面板 —— 开关 + 预设选择 + 预设导入。
+ *
+ * 开启后，消息序列由 PromptAssembler 按预设的 prompt 列表产出，而不是走 GenerationHandler
+ * 里那套写死的顺序（那就是「同一张卡在酒馆和这边体验不一样」的根因）。
+ *
+ * 关闭时行为与以前完全一致：所有酒馆分支都不进入。
+ */
+@Composable
+fun TavernModeCard(
+    assistant: Assistant,
+    modifier: Modifier = Modifier,
+    onAssistantUpdate: (Assistant) -> Unit,
+    settings: Settings? = null,
+    onSettingsUpdate: ((Settings) -> Unit)? = null,
+) {
+    val context = LocalContext.current
+    val presets = settings?.promptPresets.orEmpty()
+    val bound = presets.firstOrNull { it.id == assistant.presetId }
+    var showPicker by remember { mutableStateOf(false) }
+    var importing by remember { mutableStateOf(false) }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        importing = true
+        val parsed = runCatching {
+            val text = context.contentResolver.openInputStream(uri)
+                ?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val fallbackName = uri.lastPathSegment
+                ?.substringAfterLast('/')
+                ?.substringBeforeLast('.')
+                ?.takeIf { it.isNotBlank() } ?: "Imported"
+            me.rerere.rikkahub.data.model.parsePromptPresets(text, fallbackName)
+        }.getOrDefault(emptyList())
+        importing = false
+        if (parsed.isEmpty() || settings == null || onSettingsUpdate == null) {
+            return@rememberLauncherForActivityResult
+        }
+        onSettingsUpdate(settings.copy(promptPresets = settings.promptPresets + parsed))
+        // 导入后直接绑定第一份，省得再点一次
+        parsed.firstOrNull()?.let { onAssistantUpdate(assistant.copy(presetId = it.id)) }
+    }
+
+    Card(modifier = modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    HugeIcons.Setting07,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("酒馆模式", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "按预设的提示词顺序装配消息；关闭时走原有拼装路径",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = assistant.tavernMode,
+                    onCheckedChange = { onAssistantUpdate(assistant.copy(tavernMode = it)) },
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showPicker = true }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("预设", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        bound?.name ?: "内置默认骨架（未导入预设）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    if (bound != null) "${bound.prompts.size} 条" else "—",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Icon(
+                    HugeIcons.ArrowRight01,
+                    contentDescription = null,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+
+            TextButton(
+                onClick = { importLauncher.launch(arrayOf("application/json")) },
+                enabled = !importing && settings != null && onSettingsUpdate != null,
+            ) {
+                Text(if (importing) "导入中…" else "导入预设 JSON")
+            }
+
+            if (assistant.tavernMode && bound == null) {
+                Text(
+                    "未绑定预设：正在用内置默认骨架（main → 角色卡字段 → 世界书 → 示例 → 历史）。" +
+                        "导入一份酒馆预设才能和酒馆端完全对齐。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+
+    if (showPicker) {
+        ModalBottomSheet(onDismissRequest = { showPicker = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    "选择预设",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+                PresetPickerRow(
+                    label = "内置默认骨架",
+                    detail = "未导入预设时的兜底，不属于任一酒馆预设",
+                    selected = assistant.presetId == null,
+                ) {
+                    onAssistantUpdate(assistant.copy(presetId = null))
+                    showPicker = false
+                }
+                presets.forEach { preset ->
+                    PresetPickerRow(
+                        label = preset.name,
+                        detail = "${preset.prompts.size} 条提示词 · 正则 ${preset.regexScripts.size} 条",
+                        selected = assistant.presetId == preset.id,
+                    ) {
+                        onAssistantUpdate(assistant.copy(presetId = preset.id))
+                        showPicker = false
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PresetPickerRow(
+    label: String,
+    detail: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        RadioButton(selected = selected, onClick = onClick)
+    }
+}
 
 /**
  * 酒馆角色卡信息面板 — 简洁高级，分层展示

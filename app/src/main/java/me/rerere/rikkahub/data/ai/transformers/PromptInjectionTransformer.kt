@@ -138,19 +138,19 @@ internal fun transformMessages(
     // 放在这里而不是 GenerationHandler：collectInjections 的调用点与本函数的 sticky/cooldown 追踪器绑定，
     // 换到别处调会把粘性计数推进两次（卡的常驻条目会变粘、冷却会算快）
     if (tavernPreset != null && PromptAssembler.isActive(assistant)) {
-        val slots = injections
-            .filterIsInstance<PromptInjection.RegexInjection>()
-            .map { entry ->
-                PromptAssembler.WorldSlot(
-                    name = entry.name,
-                    position = injectionPositionToSlot(entry.position),
-                    order = entry.priority,
-                    depth = injectionPositionToDepth(entry.position, entry.injectDepth),
-                    role = entry.role,
-                    content = entry.content,
-                    sourceId = entry.id.toString(),
-                )
-            }
+        // 两种注入都转成插槽：RegexInjection（世界书，已过激活）与 ModeInjection
+        // （rikkahub 自己的常驻提示词块）。只取 RegexInjection 会把用户的模式注入静默吞掉。
+        val slots = injections.map { entry ->
+            PromptAssembler.WorldSlot(
+                name = entry.name,
+                position = injectionPositionToSlot(entry.position),
+                order = entry.priority,
+                depth = injectionPositionToDepth(entry.position, entry.injectDepth),
+                role = entry.role,
+                content = entry.content,
+                sourceId = entry.id.toString(),
+            )
+        }
         val assembled = PromptAssembler.assemble(
             PromptAssembler.Input(
                 preset = tavernPreset,
