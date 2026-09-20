@@ -699,23 +699,12 @@ class GenerationHandler(
             topP = assistant.topP,
             maxTokens = maxTokensOverride ?: assistant.maxTokens,
             tools = tools,
-            // ── 酒馆模式下**不启用模型的原生思维链**（2026-09-21 定性）──
-            // 预设的 COT 是一套「让模型把思考写在正文里」的协议：
-            //   · tool_reasoning_mode = "disabled"（预设里就这么写的）
-            //   · cot-✔️原思维：「思考内容以"<think>…"开头」
-            // 而 rikkahub 默认把 assistant.reasoningLevel 原样发出去，林鹿溪是 auto、
-            // 模型 abilities 含 REASONING → 原生推理被打开。
-            // 一旦原生推理开了，模型就把思考放进 reasoning 通道，**正文里就不会再写 COT**；
-            // 严重时还会把正文写进思维链、把提示词片段当成思考内容。
-            // 这正是「同模型同卡同预设，ST 里效果完全不同」的原因 —— 差的是 API 参数，不是提示词。
-            // 修复：酒馆模式强制 OFF，把思维链“赶回”正文，交给预设的 <think> 协议。
-            reasoningLevel = if (
-                me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)
-            ) {
-                me.rerere.ai.core.ReasoningLevel.OFF
-            } else {
-                assistant.reasoningLevel
-            },
+            // 注：2.10.13 曾在这里「酒馆模式强制 ReasoningLevel.OFF」，实测是错的，已回退：
+            // opencode.ai 落到 ChatCompletionsAPI 的 else 分支，AUTO → 不发任何参数，
+            // 而 OFF 被硬转成 reasoning_effort="low"。直测那个网关：
+            //   不发参数→reasoning 17 字（最少）；none→115；low→110；thinking.type=disabled→95；enable_thinking=false→98
+            // 即这个模型的原生推理关不掉，而且发"关闭"参数反而让它想得更多。保持原样最好。
+            reasoningLevel = assistant.reasoningLevel,
             customHeaders = buildList {
                 addAll(assistant.customHeaders)
                 addAll(model.customHeaders)
@@ -787,6 +776,22 @@ class GenerationHandler(
                 ).collect {
                     messages = streamChunkHandler.handle(messages, it)
                     onUpdateMessages(messages)
+                }
+                // 诊断：生成结束，把**剥 <think> 之前**的原始文本落盘
+                runCatching {
+                    val raw = messages.filter { it.role == MessageRole.ASSISTANT }
+                        .joinToString("\n=====\n") { m ->
+                            m.parts.filterIsInstance<me.rerere.ai.ui.UIMessagePart.Text>()
+                                .joinToString("\n") { it.text }
+                        }
+                    java.io.File(
+                        context.filesDir.absolutePath + "/tavern-last-output.txt",
+                    ).writeText(raw)
+                    runCatching {
+                        java.io.File(
+                            "/storage/emulated/0/Documents/AgentWork/tavern-last-output.txt",
+                        ).writeText(raw)
+                    }
                 }
             } catch (e: Exception) {
                 val msg = e.message ?: ""
