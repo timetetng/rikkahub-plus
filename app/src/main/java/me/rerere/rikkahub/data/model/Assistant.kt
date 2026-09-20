@@ -254,7 +254,9 @@ fun String.replaceRegexesTavern(
             rule.minDepth?.let { if (depth < it) return@fold acc }
             rule.maxDepth?.let { if (depth > it) return@fold acc }
         }
-        applyTavernRegex(acc, rule, macros)
+        // 兜底：单条正则出任何问题都不应该把整个 UI 搞崩（2.10.3 的闪退就是这么来的：
+        // 一条非法模式被抛到渲染路径上）。坏正则退回原文，保证其余正则照常生效。
+        runCatching { applyTavernRegex(acc, rule, macros) }.getOrDefault(acc)
     }
 }
 
@@ -362,26 +364,28 @@ private fun renderTavernReplacement(
     return expandSimpleMacros(sb.toString(), macros)
 }
 
-private fun replaceWithRegex(input: String, regex: AssistantRegex): String {
+private fun replaceWithRegex(input: String, regex: AssistantRegex): String = runCatching {
     val compiled = compileRegexCached(regex.findRegex)
     // 官方酒馆：替换字符串里的 {{match}}（不区分大小写）= 当前完整匹配，等价 $0
-    val replacement = regex.replaceString.replace(
-        Regex("""\{\{match}}""", RegexOption.IGNORE_CASE),
-        "$0",
-    )
+    //
+    // ⚠️ 必须用**字面量替换**，绝不能写成 Regex("\\{\\{match}}")：
+    //    那个模式在 java.util.regex 里非法（} 没有配对的 {），抛 PatternSyntaxException。
+    //    这行以前不套 runCatching，只是在「没有正则通过过滤」时永远走不到，所以潜伏了很久；
+    //    2.10.3 把预设正则并入执行链后第一次走到就崩了（一进聊天页就闪退）。
+    val replacement = regex.replaceString.replace("{{match}}", "\$0", ignoreCase = true)
     if (compiled != null) {
         try {
-            return input.replace(regex = compiled, replacement = replacement)
+            input.replace(regex = compiled, replacement = replacement)
         } catch (e: Exception) {
             e.printStackTrace()
             // 替换字符串可能引用不存在的分组，失败时返回原字符串
-            return input
+            input
         }
+    } else {
+        // 编译失败：尝试变长 lookbehind 模拟（官方 JS 引擎支持，java.util.regex 不支持）
+        VariableLookbehind.replace(input, regex.findRegex, replacement) ?: input
     }
-    // 编译失败：尝试变长 lookbehind 模拟（官方 JS 引擎支持，java.util.regex 不支持）
-    val simulated = VariableLookbehind.replace(input, regex.findRegex, replacement)
-    return simulated ?: input
-}
+}.getOrDefault(input)
 
 /**
  * 变长 lookbehind 模拟（官方酒馆正则脚本常用 (?<=...) 变长断言，JS 支持而 java.util.regex 只支持固定长度）。
