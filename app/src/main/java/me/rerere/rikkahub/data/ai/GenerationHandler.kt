@@ -718,11 +718,27 @@ class GenerationHandler(
                         if (p is me.rerere.ai.ui.UIMessagePart.Text) p.text.length else 0
                     }
                 }
+                // 标记计数：直接看发出去的 prompt 里还剩什么
+                //   · {{setvar / {{getvar / {{// 残留 → 宏没展开
+                //   · <think_rules> / <draft_notes> 缺失 → COT 指令没进去
+                val joined = internalMessages.joinToString("\n") { m ->
+                    m.parts.filterIsInstance<me.rerere.ai.ui.UIMessagePart.Text>().joinToString("") { it.text }
+                }
+                val markers = listOf(
+                    "{{setvar", "{{getvar", "{{//", "{{user}}", "{{char}}",
+                    "<think_rules>", "<draft_notes>", "COT-pov", "COT-storycheck", "think_rules",
+                )
+                val counts = markers.joinToString(" ") { mk ->
+                    var n = 0; var i = joined.indexOf(mk)
+                    while (i >= 0) { n++; i = joined.indexOf(mk, i + mk.length) }
+                    mk + "=" + n
+                }
                 android.util.Log.i(
                     "TavernDiag",
                     "发送前: internalMessages=" + internalMessages.size +
                         " 其中system=" + sysCount + " 总字符=" + chars,
                 )
+                android.util.Log.i("TavernDiag", "发送前标记: " + counts)
             }
             // Streaming: retry once on transient error (429/5xx/timeout)
             val streamChunkHandler = StreamChunkHandler(model)
