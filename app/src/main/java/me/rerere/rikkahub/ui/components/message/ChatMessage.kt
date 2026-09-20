@@ -304,6 +304,15 @@ private fun MessagePartsBlock(
     val displayRegexRules = remember(assistant, settings.promptPresets, settings.globalRegexes) {
         resolveRegexes(assistant, settings.promptPresets, settings.globalRegexes)
     }
+    // 流式期间**跳过正则**：文本每个 chunk 都在变，正则要随长度全量重跑，
+    // 而预设正则里常见 /([\s\S]*?)…/ /([\s\S]*?)<\/think…>/ 这类惰性匹配，
+    // 长文本下开销超线性 —— 实测能把输出拖到每秒 1-2 字。
+    // 身份宏很便宜（无 {{ 直接返回），保留；生成结束后 loading 转 false，正则一次性补上。
+    val displayText: (String, AssistantAffectScope) -> String = { text, scope ->
+        val named = text.replaceIdentityMacros(displayUserName, displayCharName)
+        if (loading) named
+        else named.replaceRegexes(rules = displayRegexRules, scope = scope, visual = true)
+    }
     val partsState by rememberUpdatedState(parts)
 
     val handleClickCitation: (String) -> Unit = remember {
@@ -397,14 +406,7 @@ private fun MessagePartsBlock(
                                 ) {
                                     Column(modifier = Modifier.padding(8.dp)) {
                                         MarkdownBlock(
-                                            content = part.text
-                                                // 先宏后正则（官方语义）
-                                                .replaceIdentityMacros(displayUserName, displayCharName)
-                                                .replaceRegexes(
-                                                    rules = displayRegexRules,
-                                                    scope = AssistantAffectScope.USER,
-                                                    visual = true,
-                                                ),
+                                            content = displayText(part.text, AssistantAffectScope.USER),
                                             onClickCitation = handleClickCitation
                                         )
                                     }
@@ -418,26 +420,14 @@ private fun MessagePartsBlock(
                                     ) {
                                         Column(modifier = Modifier.padding(8.dp)) {
                                             MarkdownBlock(
-                                                content = part.text
-                                                    .replaceIdentityMacros(displayUserName, displayCharName)
-                                                    .replaceRegexes(
-                                                        rules = displayRegexRules,
-                                                        scope = AssistantAffectScope.ASSISTANT,
-                                                        visual = true,
-                                                    ),
+                                                content = displayText(part.text, AssistantAffectScope.ASSISTANT),
                                                 onClickCitation = handleClickCitation,
                                             )
                                         }
                                     }
                                 } else {
                                     MarkdownBlock(
-                                        content = part.text
-                                            .replaceIdentityMacros(displayUserName, displayCharName)
-                                            .replaceRegexes(
-                                                rules = displayRegexRules,
-                                                scope = AssistantAffectScope.ASSISTANT,
-                                                visual = true,
-                                            ),
+                                        content = displayText(part.text, AssistantAffectScope.ASSISTANT),
                                         onClickCitation = handleClickCitation,
                                         modifier = Modifier
                                             .animateContentSize()

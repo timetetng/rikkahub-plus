@@ -48,12 +48,16 @@ internal class ChatCompletionsStreamDecoder : StreamChunkDecoder {
                 responseId = payload["id"]?.jsonPrimitive?.contentOrNull ?: responseId
                 responseModel = payload["model"]?.jsonPrimitive?.contentOrNull ?: responseModel
 
-                payload["choices"]?.jsonArray?.firstOrNull()?.jsonObject?.let { choice ->
+                // ⚠️ 必须用 jsonArrayOrNull：网关在 delta 里发**显式 null**（常见于思考→正文的切换帧，
+                //   如 "tool_calls": null）时，`?.jsonArray` 拿到的是 JsonNull **对象**（不是 Kotlin null），
+                //   会抛「Element class kotlinx.serialization.json.JsonNull is not a JsonArray」，
+                //   症状是「思维链跑完、正文刚开始」直接报错。
+                payload["choices"]?.jsonArrayOrNull?.firstOrNull()?.jsonObject?.let { choice ->
                     (choice["delta"]?.jsonObject ?: choice["message"]?.jsonObject)?.let { message ->
                         val messageWithoutTools = JsonObject(message.filterKeys { it != "tool_calls" })
                         addAll(streamState.append(parseMessage(messageWithoutTools), responseId))
 
-                        message["tool_calls"]?.jsonArray?.forEachIndexed { fallbackIndex, element ->
+                        message["tool_calls"]?.jsonArrayOrNull?.forEachIndexed { fallbackIndex, element ->
                             val toolCall = element.jsonObject
                             val index = toolCall["index"]?.jsonPrimitive?.intOrNull ?: fallbackIndex
                             val toolId = toolCall["id"]?.jsonPrimitive?.contentOrNull

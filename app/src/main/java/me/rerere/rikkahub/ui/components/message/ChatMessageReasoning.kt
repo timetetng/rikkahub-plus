@@ -174,13 +174,22 @@ private fun ReasoningContent(
             LocalSettings.current.promptPresets,
             LocalSettings.current.globalRegexes,
         )
+        // 流式期间跳过正则：思考文本是逐字长起来的，而正则要随长度全量重跑，
+        // 预设里 /([\s\S]*?)<\/(think_?fox~?)>/ 这类惰性匹配在长文本下开销超线性
+        // —— 这正是「思维链越长吐字越慢，最后每秒 1-2 字」的根因。
+        // loading 转 false 后一次性补上（此处必须放在 MarkdownBlock 之外，不能在里面调）。
+        val reasoningText = if (loading) {
+            reasoning.reasoning
+        } else {
+            reasoning.reasoning.replaceRegexes(
+                rules = reasoningRules,
+                scope = AssistantAffectScope.ASSISTANT,
+                visual = true,
+            )
+        }
         val reasoningContent = @Composable {
             MarkdownBlock(
-                content = reasoning.reasoning.replaceRegexes(
-                    rules = reasoningRules,
-                    scope = AssistantAffectScope.ASSISTANT,
-                    visual = true,
-                ),
+                content = reasoningText,
                 style = reasoningTextStyle,
                 modifier = Modifier.fillMaxSize(),
             )
