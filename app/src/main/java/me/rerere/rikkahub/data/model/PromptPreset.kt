@@ -185,6 +185,11 @@ val ST_IDENTIFIER_MAP: Map<String, String> = mapOf(
 fun defaultPositionMap(): Map<String, String> = mapOf(
     "beforeChar" to "charBefore",
     "afterChar" to "charAfter",
+    // 示例消息前后 → 挂在 dialogueExamples 骨架块上（fast-tavern 默认表里没有，这里补上）
+    "beforeEm" to "dialogueExamples",
+    "afterEm" to "dialogueExamples",
+    // beforeAn / afterAn / outlet 不在此表内：酒馆里它们挂在导演备注与 outlet 上，
+    // 由 AuthorsNoteTransformer 单独处理（酒馆模式下这部分尚未接入，见 docs/tavern-parity.md）
 )
 
 /**
