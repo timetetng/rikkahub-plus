@@ -697,6 +697,20 @@ class GenerationHandler(
             }
         )
         if (stream) {
+            // 诊断：确认装配结果真的进了请求（transforms() 的返回值到 streamText 之间只剩这几行）
+            run {
+                val sysCount = internalMessages.count { it.role == MessageRole.SYSTEM }
+                val chars = internalMessages.sumOf { m ->
+                    m.parts.sumOf { p ->
+                        if (p is me.rerere.ai.ui.UIMessagePart.Text) p.text.length else 0
+                    }
+                }
+                android.util.Log.i(
+                    "TavernDiag",
+                    "发送前: internalMessages=" + internalMessages.size +
+                        " 其中system=" + sysCount + " 总字符=" + chars,
+                )
+            }
             // Streaming: retry once on transient error (429/5xx/timeout)
             val streamChunkHandler = StreamChunkHandler(model)
             try {
