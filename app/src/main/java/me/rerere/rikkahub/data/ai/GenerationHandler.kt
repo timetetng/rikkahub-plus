@@ -739,6 +739,27 @@ class GenerationHandler(
                         " 其中system=" + sysCount + " 总字符=" + chars,
                 )
                 android.util.Log.i("TavernDiag", "发送前标记: " + counts)
+
+                // 把真正发出去的 prompt 原样落盘 —— 出问题时直接读，不再靠推理
+                runCatching {
+                    val body = internalMessages.joinToString("\n\n") { m ->
+                        "===== role=" + m.role + " parts=" + m.parts.size + " =====\n" +
+                            m.parts.filterIsInstance<me.rerere.ai.ui.UIMessagePart.Text>()
+                                .joinToString("\n") { it.text }
+                    }
+                    // ① 应用内目录（一定可写）
+                    java.io.File(
+                        context.filesDir.absolutePath + "/tavern-last-prompt.txt",
+                    ).writeText(body)
+                    // ② 外部产出目录（方便直接读）
+                    runCatching {
+                        val f = java.io.File(
+                            "/storage/emulated/0/Documents/AgentWork/tavern-last-prompt.txt",
+                        )
+                        f.parentFile?.mkdirs()
+                        f.writeText(body)
+                    }
+                }
             }
             // Streaming: retry once on transient error (429/5xx/timeout)
             val streamChunkHandler = StreamChunkHandler(model)
