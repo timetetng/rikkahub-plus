@@ -68,7 +68,12 @@ object PromptInjectionTransformer : InputMessageTransformer {
             generationType = ctx.generationType,
             onOverflow = { ctx.processingStatus?.value = "世界书预算已满，部分条目未注入" },
             personaDescription = ctx.settings.personas
-                .firstOrNull { p -> p.id == ctx.settings.activePersonaId && p.enabled }
+                .firstOrNull { p ->
+                    p.id == ctx.settings.activePersonaId &&
+                        p.enabled &&
+                        // 与人设锁定保持一致：锁了别的角色就不该套到本角色上
+                        (p.lockedCharacterIds.isEmpty() || ctx.assistant.id in p.lockedCharacterIds)
+                }
                 ?.description ?: "",
             userName = ctx.settings.displaySetting.userNickname.ifBlank { "User" },
             tavernPreset = resolvePromptPreset(ctx.assistant, ctx.settings.promptPresets),
@@ -156,6 +161,8 @@ internal fun transformMessages(
                 preset = tavernPreset,
                 assistant = assistant,
                 userName = userName,
+                // 预设里的 personaDescription 骨架块要用（酒馆默认预设就有这个块）
+                personaDescription = personaDescription,
                 // 系统消息（工具 prompt / 用户上下文）由 GenerationHandler 前置，不算对话历史
                 history = messages.filter { it.role != MessageRole.SYSTEM },
                 exampleMessages = assistant.buildExampleMessages(userName),

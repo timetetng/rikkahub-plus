@@ -180,6 +180,101 @@ fun TavernModeCard(
                 Text(if (importing) "导入中…" else "导入预设 JSON")
             }
 
+            // 酒馆助手（TavernHelper）脚本本版不执行，但要明确告知，不能静默丢弃
+            val helperScripts = bound?.tavernHelperScripts ?: 0
+            if (helperScripts > 0) {
+                Text(
+                    "此预设含 $helperScripts 个酒馆助手（TavernHelper）脚本。" +
+                        "本版不执行卡内 JS，依赖脚本的逻辑（变量更新、楼层渲染等）会缺失。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+
+            // 预设的提示词列表 —— 骨架顺序一目了然，可逐条开关（最直接的验证入口）
+            // 先把可空值接成局部非空 val：避免在 lambda 里依赖智能转换
+            val enabledCount = bound?.prompts?.count { it.enabled } ?: 0
+            val totalCount = bound?.prompts?.size ?: 0
+            val boundPreset = bound
+            val currentSettings = settings
+            val applySettings = onSettingsUpdate
+            if (boundPreset != null && currentSettings != null && applySettings != null) {
+                var expanded by remember { mutableStateOf(false) }
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(
+                        if (expanded) "收起提示词列表"
+                        else "查看提示词列表（" + enabledCount + "/" + totalCount + " 条启用）"
+                    )
+                }
+                if (expanded) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            "顺序即骨架顺序。点一行切换启用；FIXED 表示按深度插入对话内部。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                        boundPreset.prompts.forEachIndexed { index, item ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val updated = boundPreset.copy(
+                                            prompts = boundPreset.prompts.mapIndexed { j, p ->
+                                                if (j == index) p.copy(enabled = !p.enabled) else p
+                                            }
+                                        )
+                                        applySettings(
+                                            currentSettings.copy(
+                                                promptPresets = currentSettings.promptPresets.map {
+                                                    if (it.id == boundPreset.id) updated else it
+                                                }
+                                            )
+                                        )
+                                    }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    if (item.enabled) "●" else "○",
+                                    color = if (item.enabled) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.padding(end = 8.dp),
+                                )
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        item.name.ifBlank { item.identifier },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        buildString {
+                                            append(item.identifier)
+                                            append(" · ").append(item.role.name.lowercase())
+                                            if (item.position == me.rerere.rikkahub.data.model.PromptPosition.FIXED) {
+                                                append(" · FIXED depth=").append(item.depth)
+                                                    .append(" order=").append(item.order)
+                                            }
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (assistant.tavernMode && bound == null) {
                 Text(
                     "未绑定预设：正在用内置默认骨架（main → 角色卡字段 → 世界书 → 示例 → 历史）。" +
@@ -214,9 +309,10 @@ fun TavernModeCard(
                     showPicker = false
                 }
                 presets.forEach { preset ->
+                    val helper = if (preset.tavernHelperScripts > 0) " · 助手脚本 ${preset.tavernHelperScripts}" else ""
                     PresetPickerRow(
                         label = preset.name,
-                        detail = "${preset.prompts.size} 条提示词 · 正则 ${preset.regexScripts.size} 条",
+                        detail = "${preset.prompts.size} 条提示词 · 正则 ${preset.regexScripts.size} 条$helper",
                         selected = assistant.presetId == preset.id,
                     ) {
                         onAssistantUpdate(assistant.copy(presetId = preset.id))

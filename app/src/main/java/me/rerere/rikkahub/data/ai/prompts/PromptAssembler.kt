@@ -48,6 +48,8 @@ object PromptAssembler {
         val preset: PromptPreset,
         val assistant: Assistant,
         val userName: String,
+        /** 用户人设（persona）；预设里的 personaDescription 骨架块用它。空字符串则跳过 */
+        val personaDescription: String = "",
         /** 真实对话历史（按时间正序）。工具调用 / 多模态 parts 原样保留 */
         val history: List<UIMessage> = emptyList(),
         /** mes_example 解析出的示例消息（dialogueExamples 骨架块用） */
@@ -215,8 +217,21 @@ object PromptAssembler {
             dialogue.add(at, inj.item)
         }
 
-        // 角色卡的历史后指令：预设里没有 jailbreak 条目时的兜底
-        val hasJailbreak = enabled.any { it.identifier == "jailbreak" && it.position == PromptPosition.FIXED }
+        // 预设里没有 personaDescription 骨架块时的兜底：
+        // 直接丢掉人设对角色扮演影响太大，按 depth 0（最靠近生成点）追加一条
+        val hasPersonaBlock = enabled.any { it.identifier == "personaDescription" }
+        if (!hasPersonaBlock && input.personaDescription.isNotBlank()) {
+            dialogue += TaggedItem(
+                tag = "Preset: personaDescription（无该骨架块时兜底）",
+                target = RegexTarget.SLASH_COMMANDS,
+                role = MessageRole.SYSTEM,
+                text = input.personaDescription,
+            )
+        }
+
+        // 角色卡的历史后指令：只有整个预设里根本没有 jailbreak 条目时才兜底追加
+        // （酒馆默认预设的 jailbreak 是骨架块，排在 chatHistory 之后）
+        val hasJailbreak = enabled.any { it.identifier == "jailbreak" }
         if (!hasJailbreak && input.postHistoryInstructions.isNotBlank()) {
             dialogue += TaggedItem(
                 tag = "Preset: jailbreak（卡内 post_history_instructions 兜底）",
@@ -259,9 +274,15 @@ object PromptAssembler {
             "charDescription" -> tav?.description.orEmpty()
             "charPersonality" -> tav?.personality.orEmpty()
             "scenario" -> tav?.scenario.orEmpty()
+            // 用户人设位（酒馆默认预设里的 personaDescription 骨架块）
+            "personaDescription" -> input.personaDescription
+            // 历史后指令：酒馆里「角色卡的 post_history_instructions」是**替换**预设的 jailbreak 内容，
+            // 而不是另插一条，所以卡里非空时优先用卡的
+            "jailbreak" -> input.postHistoryInstructions.ifBlank { prompt.content }
             // charBefore / charAfter 是插槽锚点，自身无内容
             "charBefore", "charAfter", "worldInfoBefore", "worldInfoAfter" -> ""
-            "enhanceDefinitions" -> ""
+            // enhanceDefinitions 看着像 marker，其实带真实内容（默认预设里 152 字符），
+            // 不能当空块吃掉 —— 让它走默认分支用 prompt.content
             else -> prompt.content
         }
     }

@@ -430,6 +430,13 @@ private fun convertPreset(raw: JsonObject, fallbackName: String): PromptPreset {
         convertRegexScriptsFromSillyTavern(ext?.get("regex_scripts") ?: ext?.get("regexScripts"))
     }
 
+    // 3b) 酒馆助手脚本：不执行，只计数 —— 导入时必须让用户知道哪些逻辑会缺失
+    val tavernHelperScripts: Int = run {
+        val ext = otherStripped["extensions"] as? JsonObject ?: return@run 0
+        val helper = ext["tavern_helper"] as? JsonObject ?: return@run 0
+        (helper["scripts"] as? JsonArray)?.size ?: 0
+    }
+
     // 4) prompt_order
     val apiSetting = raw["apiSetting"] as? JsonObject
     val rawOther = raw["other"] as? JsonObject
@@ -462,6 +469,7 @@ private fun convertPreset(raw: JsonObject, fallbackName: String): PromptPreset {
         } else {
             SOURCE_KIND_OPENAI
         },
+        tavernHelperScripts = tavernHelperScripts,
     )
 }
 

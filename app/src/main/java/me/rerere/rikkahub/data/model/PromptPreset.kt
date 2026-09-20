@@ -124,6 +124,8 @@ data class PromptItem(
  * @param other 采样参数等原样 JSON（无损保管，导出时带回）
  * @param sourceKind 来源：openai / textgenerationwebui / custom
  * @param builtin 是否内置默认预设（不可删除）
+ * @param tavernHelperScripts 内嵌的酒馆助手（TavernHelper）脚本数量。
+ *   **本版不执行卡内 JS**，这个数字只用于向用户明确提示「哪些逻辑会缺失」，绝不静默丢弃。
  */
 @Serializable
 data class PromptPreset(
@@ -135,6 +137,7 @@ data class PromptPreset(
     val other: String = "",
     val sourceKind: String = SOURCE_KIND_OPENAI,
     val builtin: Boolean = false,
+    val tavernHelperScripts: Int = 0,
 ) {
     /** 世界书条目 position → 预设 identifier 的插槽映射（对齐 fast-tavern 默认值，可被预设覆盖） */
     val positionMap: Map<String, String>
@@ -164,6 +167,7 @@ val MARKER_IDENTIFIERS: Set<String> = setOf(
     "charDescription",
     "charPersonality",
     "scenario",
+    "personaDescription",
     "dialogueExamples",
     ID_CHAT_HISTORY,
     "enhanceDefinitions",

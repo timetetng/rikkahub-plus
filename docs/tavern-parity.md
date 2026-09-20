@@ -225,7 +225,7 @@ Java 正则不支持，**移植到新模型时保留**。
 | `data.system_prompt` / `post_history_instructions` | 顶层 | ✅ 已有 |
 | `data.extensions.depth_prompt` | 顶层 | ✅ 已有 |
 | `data.character_book` | 顶层 | ✅ 已有 |
-| **`data.extensions.regex_scripts`** | 顶层 | 🆕 **v1 导入**（每个脚本 → `AssistantRegex`/`RegexRule`） |
+| **`data.extensions.regex_scripts`** | 顶层 | 🆕 **v1 导入**（每个脚本 → `AssistantRegex`；实测 35 张卡里 18 张有）|
 | `data.extensions.alternate_greetings` | 顶层 | ✅ 已有 |
 | `data.extensions.talkativeness` / `fav` | 顶层 | ✅ 已有（并入 extensions） |
 | `data.extensions.tavern_helper` | 顶层 | v1：**识别 + 报告**，列出用到的事件/API，不静默丢弃 |
@@ -250,3 +250,65 @@ Java 正则不支持，**移植到新模型时保留**。
 **对照 oracle**：把 `py-fast-tavern` 源码 vend 到 `app/src/main/python/`，
 用 Chaquopy（3.12，零新依赖）在**测试路径**跑同一份输入做 diff；它的 pytest 也当回归用。
 主生成链路不走 Python 桥（会丢多模态 parts 与工具调用结构）。
+
+---
+
+## 7. 真实数据核对（2026-09-20）
+
+样本 = 容器内装了 4 年的 SillyTavern 实例：`~/st-docker/data/default-user/`
+（3 份预设 · 36 张卡 · 世界书目录）。用它逐条验证了 §3.3 的导入假设。
+
+### 7.1 验证通过
+
+| 假设 | 真实取值 |
+|---|---|
+| `prompt_order` 形态 | `list[{character_id, order:[{identifier, enabled}]}]`，**取最后一个**（`100001`），它比 `100000` 多一条 |
+| `prompts[]` 键 | `identifier / name / role / content / system_prompt / enabled / marker / injection_depth / injection_order / injection_position / forbid_overrides` |
+| `extensions.regex_scripts[]` 键 | `id / scriptName / disabled / findRegex / replaceString / trimStrings / placement / substituteRegex / minDepth / maxDepth / runOnEdit / markdownOnly / promptOnly` |
+| 正则字段类型 | `placement` **是数组**（`[2]`）、`disabled` 是 bool、`substituteRegex` 是 int、`trimStrings` 是字符串数组、`minDepth/maxDepth` 是 null 或 int |
+| `utilityPrompts` 位置 | **顶层平铺**（`new_chat_prompt` / `impersonation_prompt` / `wi_format` / `seed` …），不在 `other` 里 |
+| 世界书条目 `position` | 卡内嵌书里是**字符串** `"before_char"` / `"after_char"`，不是数字 |
+| `extensions.tavern_helper` | 结构 = `{scripts: [...], variables: {...}}` |
+
+### 7.2 由此修掉的三个真 bug
+
+1. **`personaDescription`** —— 酒馆默认预设里就有这个骨架块（排在 `worldInfoBefore` 之后、`charDescription` 之前），
+   之前没处理 → 人设**静默丢失**。已按 `personaDescription` 识别并从 persona 设置取值。
+2. **`enhanceDefinitions`** —— 看着像 marker，实际**带真实内容**（默认预设里 152 字符）。
+   当成空块会把内容吃掉。已改为走 `prompt.content`。
+3. **`jailbreak` 的位置** —— 默认预设里它是 **relative 骨架块，排在 `chatHistory` 之后**（不在 chatHistory 内部）。
+   而卡里的 `post_history_instructions` 在酒馆里是**替换**预设的 jailbreak 内容，不是另插一条。
+
+### 7.3 一个安全降级（照搬 fast-tavern）
+
+`prompts[]` 里不在 `prompt_order` 中的条目 → `enabled = false`（当 `prompt_order` 非空时）。
+实测：134 条的预设里有 9 条不在 order 中，全部因此被关掉，**不影响输出**。
+
+### 7.4 实测：哪些位置真的在用
+
+统计 35 张卡的 1686 条内嵌世界书条目：
+
+| position | 占比 |
+|---|---|
+| `after_char` | 65.8% |
+| `before_char` | 34.2% |
+| ANTop / ANBottom / atDepth / EMTop / EMBottom / outlet | **0%** |
+
+→ §5 里「`beforeAn`/`afterAn`/`outlet` 条目在酒馆模式下会被丢弃」这个缺口，
+**在当前语料里是理论性的**（0 条命中），可以放心后置。
+另：3 份预设中都**没有** `injection_position = 1` 的条目，即没有深度注入 —— 分量全压在骨架块上。
+
+### 7.5 卡语料的实际情况
+
+35 张卡里：
+
+- **18 张带内嵌正则**（最多 11 条）—— 以前这部分**全被静默忽略**，不是边角案例
+- **14 张带酒馆助手脚本**（最多 30 个）—— 印证 §0 的「识别 + 降级 + 不静默失败」是必需的
+- 30 张带内嵌世界书（最多 478 条）
+- 只有 1 张带 `post_history_instructions`
+
+### 7.6 测试样本
+
+`AgentWork/tavern-test/`：`预设-Default.json`（干净的默认预设）· `预设-TGbreak.json`（带 14 条正则 + 助手脚本）·
+`卡-可爱徒弟系统.png`（带内嵌正则 + `post_history_instructions` → 验 jailbreak 替换路径）·
+`卡-万界夺舍录.png`（11 条正则 + 36 条内嵌书 + v3）

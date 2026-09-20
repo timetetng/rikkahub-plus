@@ -611,14 +611,15 @@ class GenerationHandler(
             addAll(limitedChat.withMessageNames())
         }.let { base ->
             val persona = settings.personas.find { it.id == settings.activePersonaId }
+            // 酒馆模式下人设完全交给 PromptAssembler（预设的 personaDescription 骨架块，兜底见装配器）——
+            // 这里再插一次会落在错误位置：SYSTEM 角色会被装配器当系统消息过滤掉，非 SYSTEM 角色会混进对话历史
             if (persona != null && persona.enabled && persona.description.isNotBlank() &&
-                (persona.lockedCharacterIds.isEmpty() || assistant.id in persona.lockedCharacterIds)
+                (persona.lockedCharacterIds.isEmpty() || assistant.id in persona.lockedCharacterIds) &&
+                !me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)
             ) {
                 val personaText = "[User Persona]\n${persona.description}"
                 when (persona.position) {
                     me.rerere.rikkahub.data.model.PersonaInjectionPosition.IN_PROMPT -> {
-                        // 酒馆模式：人设是否嵌入主提示由预设骨架决定，不在这里另插一条 SYSTEM 消息
-                        if (me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)) return@let base
                         // 官方拆分路径（主提示词不含人设）才注入独立 SYSTEM 消息；
                         // 自定义上下文模板已通过 {{persona}} 嵌入时不重复注入
                         val template = assistant.contextTemplate.ifBlank { me.rerere.rikkahub.data.model.DEFAULT_CONTEXT_TEMPLATE }
