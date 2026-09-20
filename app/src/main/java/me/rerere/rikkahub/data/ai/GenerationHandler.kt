@@ -746,7 +746,9 @@ class GenerationHandler(
                 android.util.Log.i("TavernDiag", "发送前标记: " + counts)
 
                 // 把真正发出去的 prompt 原样落盘 —— 出问题时直接读，不再靠推理
-                runCatching {
+                // ⚠️ 只在酒馆模式下落盘：否则沈墨这类普通会话的每次生成都会把它覆盖掉
+                // （踩过：读出来的 dump 全是普通会话的内容，酒馆那次早就被冲了）。
+                if (me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)) runCatching {
                     val body = internalMessages.joinToString("\n\n") { m ->
                         "===== role=" + m.role + " parts=" + m.parts.size + " =====\n" +
                             m.parts.filterIsInstance<me.rerere.ai.ui.UIMessagePart.Text>()
@@ -778,7 +780,8 @@ class GenerationHandler(
                     onUpdateMessages(messages)
                 }
                 // 诊断：生成结束，把**剥 <think> 之前**的原始文本落盘
-                runCatching {
+                // 同样只在酒馆模式下落盘，避免被普通会话覆盖
+                if (me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)) runCatching {
                     val raw = messages.filter { it.role == MessageRole.ASSISTANT }
                         .joinToString("\n=====\n") { m ->
                             m.parts.filterIsInstance<me.rerere.ai.ui.UIMessagePart.Text>()
