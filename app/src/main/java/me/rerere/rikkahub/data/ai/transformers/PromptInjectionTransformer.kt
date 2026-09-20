@@ -44,6 +44,23 @@ object PromptInjectionTransformer : InputMessageTransformer {
         val activeSticky = stickyTracker.getOrPut(key) { mutableMapOf() }
         val cooldowns = cooldownTracker.getOrPut(key) { mutableMapOf() }
 
+        // ── 酒馆模式诊断（排查「预设没生效」用；确认后删）──
+        run {
+            val a = ctx.assistant
+            val presets = ctx.settings.promptPresets
+            val hit = presets.firstOrNull { it.id == a.presetId }
+            val enabledCount = hit?.prompts?.count { item -> item.enabled } ?: -1
+            val active = me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(a)
+            android.util.Log.i(
+                "TavernDiag",
+                "assistant=" + a.name + " tavernMode=" + a.tavernMode +
+                    " hasCard=" + (a.tavernData != null) +
+                    " presetId=" + a.presetId + " 库内预设=" + presets.size +
+                    " 命中=" + (hit != null) + " 命中启用条目=" + enabledCount +
+                    " isActive=" + active,
+            )
+        }
+
         val result = transformMessages(
             messages = messages,
             assistant = ctx.assistant,
@@ -177,6 +194,11 @@ internal fun transformMessages(
             injections.filterIsInstance<PromptInjection.RegexInjection>(),
         )
         tickCooldowns(cooldownEntries)
+        val totalChars = assembled.sumOf { m -> m.parts.sumOf { p -> if (p is me.rerere.ai.ui.UIMessagePart.Text) p.text.length else 0 } }
+        android.util.Log.i(
+            "TavernDiag",
+            "酒馆装配已执行: 预设=" + tavernPreset.name + " 条目=" + assembled.size + " 总字符=" + totalChars,
+        )
         return assembled
     }
 
