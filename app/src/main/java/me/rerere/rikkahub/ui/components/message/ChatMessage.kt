@@ -396,6 +396,9 @@ private fun MessagePartsBlock(
             is MessagePartBlock.ContentBlock -> key(block.index) {
                 when (val part = block.part) {
                     is UIMessagePart.Text -> {
+                        // 流式期间节流：Markdown 重新解析 + 文本重新 measure 都是 O(n)，
+                        // 每个 chunk 跑一次就是 O(n²)，长思维链下会把主线程跑满（实测 123% CPU）
+                        val shownText = rememberThrottledText(part.text, loading)
                         val textContent = @Composable {
                             if (role == MessageRole.USER) {
                                 Surface(
@@ -406,7 +409,7 @@ private fun MessagePartsBlock(
                                 ) {
                                     Column(modifier = Modifier.padding(8.dp)) {
                                         MarkdownBlock(
-                                            content = displayText(part.text, AssistantAffectScope.USER),
+                                            content = displayText(shownText, AssistantAffectScope.USER),
                                             onClickCitation = handleClickCitation
                                         )
                                     }
@@ -420,14 +423,14 @@ private fun MessagePartsBlock(
                                     ) {
                                         Column(modifier = Modifier.padding(8.dp)) {
                                             MarkdownBlock(
-                                                content = displayText(part.text, AssistantAffectScope.ASSISTANT),
+                                                content = displayText(shownText, AssistantAffectScope.ASSISTANT),
                                                 onClickCitation = handleClickCitation,
                                             )
                                         }
                                     }
                                 } else {
                                     MarkdownBlock(
-                                        content = displayText(part.text, AssistantAffectScope.ASSISTANT),
+                                        content = displayText(shownText, AssistantAffectScope.ASSISTANT),
                                         onClickCitation = handleClickCitation,
                                         modifier = Modifier
                                             .animateContentSize()
