@@ -11,6 +11,12 @@ import me.rerere.rikkahub.data.model.PromptInjection
 import me.rerere.rikkahub.data.model.Lorebook
 import me.rerere.rikkahub.data.model.extractContextForMatching
 import me.rerere.rikkahub.data.model.isTriggered
+import me.rerere.rikkahub.data.ai.prompts.PromptAssembler
+import me.rerere.rikkahub.data.model.PromptPreset
+import me.rerere.rikkahub.data.model.buildExampleMessages
+import me.rerere.rikkahub.data.model.injectionPositionToDepth
+import me.rerere.rikkahub.data.model.injectionPositionToSlot
+import me.rerere.rikkahub.data.model.resolvePromptPreset
 import me.rerere.rikkahub.data.model.matchedKeyScore
 import kotlin.uuid.Uuid
 import kotlin.random.Random
@@ -64,6 +70,8 @@ object PromptInjectionTransformer : InputMessageTransformer {
             personaDescription = ctx.settings.personas
                 .firstOrNull { p -> p.id == ctx.settings.activePersonaId && p.enabled }
                 ?.description ?: "",
+            userName = ctx.settings.displaySetting.userNickname.ifBlank { "User" },
+            tavernPreset = resolvePromptPreset(ctx.assistant, ctx.settings.promptPresets),
         )
 
         return result
@@ -97,6 +105,9 @@ internal fun transformMessages(
     generationType: me.rerere.rikkahub.data.model.GenerationType = me.rerere.rikkahub.data.model.GenerationType.NORMAL,
     personaDescription: String = "",
     onOverflow: () -> Unit = {},
+    userName: String = "User",
+    /** 非 null 且 assistant.tavernMode=true 时走预设装配（酒馆模式）；否则行为与以前完全一致 */
+    tavernPreset: PromptPreset? = null,
 ): List<UIMessage> {
     // 收集所有需要注入的内容
     val injections = collectInjections(
@@ -122,6 +133,45 @@ internal fun transformMessages(
         personaDescription = personaDescription,
         onOverflow = onOverflow,
     )
+
+    // ── 酒馆模式：顺序交给预设装配器 ──
+    // 放在这里而不是 GenerationHandler：collectInjections 的调用点与本函数的 sticky/cooldown 追踪器绑定，
+    // 换到别处调会把粘性计数推进两次（卡的常驻条目会变粘、冷却会算快）
+    if (tavernPreset != null && PromptAssembler.isActive(assistant)) {
+        val slots = injections
+            .filterIsInstance<PromptInjection.RegexInjection>()
+            .map { entry ->
+                PromptAssembler.WorldSlot(
+                    name = entry.name,
+                    position = injectionPositionToSlot(entry.position),
+                    order = entry.priority,
+                    depth = injectionPositionToDepth(entry.position, entry.injectDepth),
+                    role = entry.role,
+                    content = entry.content,
+                    sourceId = entry.id.toString(),
+                )
+            }
+        val assembled = PromptAssembler.assemble(
+            PromptAssembler.Input(
+                preset = tavernPreset,
+                assistant = assistant,
+                userName = userName,
+                // 系统消息（工具 prompt / 用户上下文）由 GenerationHandler 前置，不算对话历史
+                history = messages.filter { it.role != MessageRole.SYSTEM },
+                exampleMessages = buildExampleMessages(assistant, userName),
+                worldSlots = slots,
+                postHistoryInstructions = assistant.tavernData?.postHistoryInstructions.orEmpty(),
+            )
+        )
+        // 与常规路径一样推进粘性/冷却，否则酒馆模式下世界书条目永不冷却
+        tickSticky(
+            activeStickyEntries,
+            cooldownEntries,
+            injections.filterIsInstance<PromptInjection.RegexInjection>(),
+        )
+        tickCooldowns(cooldownEntries)
+        return assembled
+    }
 
     if (injections.isEmpty()) {
         // 无注入时仍要推进粘性和冷却状态

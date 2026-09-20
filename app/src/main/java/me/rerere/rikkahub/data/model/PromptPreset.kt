@@ -193,6 +193,55 @@ fun defaultPositionMap(): Map<String, String> = mapOf(
 )
 
 /**
+ * rikkahub 的 [InjectionPosition] → 新格式 position 字符串（[PromptAssembler] 的插槽匹配用）。
+ *
+ * 两套坐标系不是一个东西：rikkahub 的 InjectionPosition 同时服务 ModeInjection 与世界书，
+ * 取值比酒馆世界书多；酒馆世界书只有 8 个位置
+ * （beforeChar / afterChar / beforeAn / afterAn / fixed / beforeEm / afterEm / outlet）。
+ * 所以下面有一半是「就近落地」而不是一一对应，逐条标注了理由。
+ *
+ * 返回值有两种形态：
+ * - 插槽组字符串（beforeChar / afterChar / beforeEm / afterEm）→ 会被 [defaultPositionMap] 映射到骨架块
+ * - 直接就是骨架块 identifier 或固定值（chatHistory / fixed）→ 不做映射，直接匹配
+ *
+ * @param depth 仅 position 解析为 `fixed` 时有意义（调用方传 entry 的 injectDepth）
+ */
+fun injectionPositionToSlot(position: InjectionPosition): String = when (position) {
+    // 与酒馆一一对应
+    InjectionPosition.BEFORE_CHARACTER -> "beforeChar"
+    InjectionPosition.AFTER_CHARACTER -> "afterChar"
+    InjectionPosition.AT_DEPTH -> "fixed"
+    InjectionPosition.EM_TOP -> "beforeEm"
+    InjectionPosition.EM_BOTTOM -> "afterEm"
+
+    // 酒馆世界书没有「系统提示词前后」这两种位置，就近落到角色卡块两侧
+    InjectionPosition.BEFORE_SYSTEM_PROMPT -> "beforeChar"
+    InjectionPosition.AFTER_SYSTEM_PROMPT -> "afterChar"
+
+    // antagonize = 角色卡与对话之间，酒馆里就是 afterChar 的位置
+    InjectionPosition.ANTAGONIZE -> "afterChar"
+
+    // 对话最开头 = 语义上正好是 chatHistory 骨架块**之前**，直接命中该 identifier
+    InjectionPosition.TOP_OF_CHAT -> ID_CHAT_HISTORY
+
+    // 「最新消息之前」「最近一条 AI 回复之后」都是 depth 0 的深度注入
+    InjectionPosition.BOTTOM_OF_CHAT -> "fixed"
+    InjectionPosition.AFTER_DIALOG -> "fixed"
+
+    // 导演备注位：酒馆世界书里对应 ANTop / ANBottom
+    InjectionPosition.AUTHOR_NOTE -> "beforeAn"
+}
+
+/**
+ * 固定注入条目实际使用的深度。
+ * 只有解析为 `fixed` 的位置才看深度；其中「对话底部/对话之后」在酒馆里深度为 0。
+ */
+fun injectionPositionToDepth(position: InjectionPosition, injectDepth: Int): Int = when (position) {
+    InjectionPosition.BOTTOM_OF_CHAT, InjectionPosition.AFTER_DIALOG -> 0
+    else -> injectDepth
+}
+
+/**
  * 酒馆默认预设顺序 —— 导入的预设缺 prompt_order 时的兜底骨架。
  * 顺序来自 SillyTavern 默认 openai 预设。
  */

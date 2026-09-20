@@ -130,6 +130,25 @@ class GenerationHandler(
         context: android.content.Context,
         conversationRepo: me.rerere.rikkahub.data.repository.ConversationRepository,
     ): List<UIMessage> {
+        // ── 酒馆模式前置分支 ──
+        // 角色卡字段 / 示例对话 / 主提示词全部交给 PromptAssembler 按预设装配。
+        // 这里只保留「工具 system prompt + 用户上下文」：工具是 rikkahub 自身能力，不能丢；
+        // 其余若在这里也拼一份，就会和装配器双重注入。
+        if (me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)) {
+            val tavernText = buildString {
+                tools.forEach { tool ->
+                    appendLine()
+                    append(tool.systemPrompt(model, messages))
+                }
+                val userContext = buildUserContext(memories, assistant, settings)
+                if (userContext.isNotBlank()) {
+                    appendLine()
+                    append(userContext)
+                }
+            }.trim()
+            return if (tavernText.isBlank()) emptyList() else listOf(UIMessage.system(prompt = tavernText))
+        }
+
         val activePersona = settings.personas
             .find { it.id == settings.activePersonaId }
             ?.takeIf { it.enabled && (it.lockedCharacterIds.isEmpty() || assistant.id in it.lockedCharacterIds) }
@@ -553,12 +572,24 @@ class GenerationHandler(
             }
             if (prebuiltSystemMessages.isNotEmpty()) {
                 addAll(prebuiltSystemMessages)
+            } else if (me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)) {
+                // 酒馆模式：角色上下文由装配器产出，此处只放工具 prompt
+                val toolOnly = buildString {
+                    tools.forEach { tool ->
+                        appendLine()
+                        append(tool.systemPrompt(model, messages))
+                    }
+                }.trim()
+                if (toolOnly.isNotBlank()) add(UIMessage.system(prompt = toolOnly))
             } else if (fallbackSystem.isNotBlank()) {
                 add(UIMessage.system(prompt = fallbackSystem))
             }
 
             // ── 官方 mes_example：作为示例消息注入（story string 之后、聊天历史之前）──
-            if (assistant.tavernData != null) {
+            // 酒馆模式不在这里加：示例对话是预设的 dialogueExamples 骨架块，由装配器按预设位置产出
+            if (assistant.tavernData != null &&
+                !me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)
+            ) {
                 addAll(
                     assistant.buildExampleMessages(
                         userName = settings.displaySetting.userNickname.ifBlank { "User" }
@@ -569,9 +600,12 @@ class GenerationHandler(
             // ── s10: getUserContext — 用户上下文通过 <system-reminder> UserMessage 注入 ──
             // 对标 Claude Code context.ts → prependUserContext()
             // getUserContext 返回 { claudeMd, currentDate }，此处映射为 memories + currentDate
-            val userContext = buildUserContext(memories, assistant, settings)
-            if (userContext.isNotBlank()) {
-                add(UIMessage.user(prompt = userContext))
+            // 酒馆模式改走系统消息（见 buildCachedSystemPrompt）：否则它会混进对话历史，把注入深度算歪
+            if (!me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)) {
+                val userContext = buildUserContext(memories, assistant, settings)
+                if (userContext.isNotBlank()) {
+                    add(UIMessage.user(prompt = userContext))
+                }
             }
 
             addAll(limitedChat.withMessageNames())
@@ -583,6 +617,8 @@ class GenerationHandler(
                 val personaText = "[User Persona]\n${persona.description}"
                 when (persona.position) {
                     me.rerere.rikkahub.data.model.PersonaInjectionPosition.IN_PROMPT -> {
+                        // 酒馆模式：人设是否嵌入主提示由预设骨架决定，不在这里另插一条 SYSTEM 消息
+                        if (me.rerere.rikkahub.data.ai.prompts.PromptAssembler.isActive(assistant)) return@let base
                         // 官方拆分路径（主提示词不含人设）才注入独立 SYSTEM 消息；
                         // 自定义上下文模板已通过 {{persona}} 嵌入时不重复注入
                         val template = assistant.contextTemplate.ifBlank { me.rerere.rikkahub.data.model.DEFAULT_CONTEXT_TEMPLATE }

@@ -8,7 +8,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import me.rerere.ai.core.MessageRole
 import kotlin.uuid.Uuid
@@ -465,6 +464,13 @@ private fun convertPreset(raw: JsonObject, fallbackName: String): PromptPreset {
         },
     )
 }
+
+/**
+ * 取助手绑定的预设；未绑定 presetId 或找不到时回退内置默认预设。
+ * 只在 `assistant.tavernMode == true` 时才会被用到，所以回退代价可以接受。
+ */
+fun resolvePromptPreset(assistant: Assistant, presets: List<PromptPreset>): PromptPreset =
+    presets.firstOrNull { it.id == assistant.presetId } ?: builtinDefaultPreset()
 
 /**
  * 内置默认预设 —— 用户没导入预设、又想开酒馆模式时的兜底。
