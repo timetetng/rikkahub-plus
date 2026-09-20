@@ -7,11 +7,22 @@ import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import kotlin.time.Clock
 
-private val THINKING_REGEX = Regex("<think>([\\s\\S]*?)</think>", RegexOption.DOT_MATCHES_ALL)
+// ⚠️ 模型不总是写 <think>…</think>。实测（2026-09-21）出现过：
+//   开标签写 **<thinking>**、闭标签写 **</think>** —— 两边不一致。
+// 原正则 "<think>([\s\S]*?)</think>" 因此**匹配失败**，COT 没被剥离，
+// 和正文一起留在气泡里（症状：回复奇长、整段思维链显示在正文里）。
+// 所以开闭都要容忍 think / thinking、大小写、以及标签内空白。
+private val THINKING_REGEX = Regex(
+    "<think(?:ing)?\\s*>([\\s\\S]*?)</think(?:ing)?\\s*>",
+    setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE),
+)
 // 流式期间为了能实时显示思考，未闭合的也先当思考；
 // 但**最终落盘时绝不能用它**（见 onGenerationFinish）。
-private val THINKING_UNCLOSED_REGEX = Regex("<think>([\\s\\S]*?)(?:</think>|$)", RegexOption.DOT_MATCHES_ALL)
-private val CLOSING_TAG_REGEX = Regex("</think>")
+private val THINKING_UNCLOSED_REGEX = Regex(
+    "<think(?:ing)?\\s*>([\\s\\S]*?)(?:</think(?:ing)?\\s*>|$)",
+    setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE),
+)
+private val CLOSING_TAG_REGEX = Regex("</think(?:ing)?>", RegexOption.IGNORE_CASE)
 
 // 部分供应商不会返回reasoning parts, 所以需要这个transformer
 object ThinkTagTransformer : OutputMessageTransformer {
