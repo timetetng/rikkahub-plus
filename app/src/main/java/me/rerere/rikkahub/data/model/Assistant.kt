@@ -67,6 +67,8 @@ data class Assistant(
     val allowConversationSystemPrompt: Boolean = false, // 允许对话单独重写 system prompt
     val allowConversationPromptInjection: Boolean = false, // 允许对话单独绑定提示词注入
     val tavernData: TavernCharacterData? = null,       // 酒馆角色卡结构化数据（从PNG/JSON导入时填充）
+    val tavernMode: Boolean = false,                    // 酒馆模式：走预设驱动的装配流水线（关＝行为与以前完全一致）
+    val presetId: Uuid? = null,                         // 引用的全局预设 ID（tavernMode 开启时生效；null = 用内置默认预设）
     val enableParallelToolExecution: Boolean = true,    // 并行执行多个工具调用
     val toolRecurringLimit: Int = 8,                    // 单批同工具调用上限
     val totalStepsLimit: Int = 256,                     // 总工具调用轮数上限
@@ -107,7 +109,47 @@ data class AssistantRegex(
     val replaceString: String = "", // 替换字符串
     val affectingScope: Set<AssistantAffectScope> = setOf(),
     val visualOnly: Boolean = false, // 是否仅在视觉上影响
-)
+    // ── 酒馆对齐字段（2026-09-20 新增，全部带默认值：存量 DataStore 数据与卡片 JSON 解析不受影响）──
+    /** 酒馆正则脚本的原始 id（字符串形式），导出/去重用；内部主键仍是 [id] */
+    val externalId: String = "",
+    /** 作用目标（老字段 affectingScope 的规范化版本）；为空时按 [effectiveTargets] 从 affectingScope 推导 */
+    val targets: Set<RegexTarget> = emptySet(),
+    /** 视图：USER=显示侧 / MODEL=发送侧；为空时按 [effectiveViews] 从 visualOnly 推导 */
+    val regexView: Set<RegexView> = emptySet(),
+    /** findRegex 里的宏处理模式（none/raw/escaped） */
+    val macroMode: RegexMacroMode = RegexMacroMode.NONE,
+    /** 每次 match 先做字符串移除，再参与替换；空的匹配会被丢弃 */
+    val trimRegex: List<String> = emptyList(),
+    /** 仅对 userInput/aiOutput 生效的深度范围（depth=0 表示最后一条历史） */
+    val minDepth: Int? = null,
+    val maxDepth: Int? = null,
+    /** 酒馆 runOnEdit：编辑消息时是否重跑 */
+    val runOnEdit: Boolean = true,
+) {
+    /** 实际作用目标：新字段优先；为空时由旧 affectingScope 推导 */
+    val effectiveTargets: Set<RegexTarget>
+        get() {
+            if (targets.isNotEmpty()) return targets
+            val out = mutableSetOf<RegexTarget>()
+            for (s in affectingScope) {
+                when (s) {
+                    AssistantAffectScope.USER -> out.add(RegexTarget.USER_INPUT)
+                    AssistantAffectScope.ASSISTANT -> out.add(RegexTarget.AI_OUTPUT)
+                }
+            }
+            return out
+        }
+
+    /** 实际视图：新字段优先；为空时由旧 visualOnly 推导 */
+    val effectiveViews: Set<RegexView>
+        get() = if (regexView.isNotEmpty()) {
+            regexView
+        } else if (visualOnly) {
+            setOf(RegexView.USER)
+        } else {
+            setOf(RegexView.MODEL)
+        }
+}
 
 // 流式输出时每个chunk都会调用replaceRegexes，正则必须缓存编译结果，
 // 否则长回复期间会重复编译上万次；编译失败也缓存，避免反复构造异常

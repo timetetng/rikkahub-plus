@@ -230,6 +230,7 @@ private fun parseV2Card(context: Context, json: JsonObject, background: String?,
     val systemPrompt = buildTavernSystemPrompt(tavData)
     val presetMessages = buildPresetMessages(tavData)
     val lorebooks = buildEmbeddedLorebooks(tavData)
+    val embeddedRegexes = parseEmbeddedRegexScripts(data["extensions"]?.jsonObject)
 
     val assistant = Assistant(
         name = name,
@@ -238,6 +239,7 @@ private fun parseV2Card(context: Context, json: JsonObject, background: String?,
         presetMessages = presetMessages,
         background = background,
         tavernData = tavData,
+        regexes = embeddedRegexes,
     )
 
     return assistant to lorebooks
@@ -284,6 +286,7 @@ private fun parseV3Card(context: Context, json: JsonObject, background: String?,
     val systemPrompt = buildTavernSystemPrompt(tavData)
     val presetMessages = buildPresetMessages(tavData)
     val lorebooks = buildEmbeddedLorebooks(tavData)
+    val embeddedRegexes = parseEmbeddedRegexScripts(data["extensions"]?.jsonObject)
 
     val assistant = Assistant(
         name = name,
@@ -292,6 +295,7 @@ private fun parseV3Card(context: Context, json: JsonObject, background: String?,
         presetMessages = presetMessages,
         background = background,
         tavernData = tavData,
+        regexes = embeddedRegexes,
     )
 
     return assistant to lorebooks
@@ -309,6 +313,16 @@ private fun parseStringArray(element: kotlinx.serialization.json.JsonElement?): 
 private fun parseExtensions(obj: JsonObject?): Map<String, String> {
     if (obj == null) return emptyMap()
     return obj.entries.associate { (k, v) -> k to (v.jsonPrimitiveOrNull?.contentOrNull ?: v.toString()) }
+}
+
+/**
+ * 卡内嵌正则脚本 —— 官方把脚本挂在 `data.extensions.regex_scripts`。
+ * 以前这里被忽略，导致「酒馆卡自带正则」在 rikkahub 上完全失效（2026-09-20 补）。
+ */
+private fun parseEmbeddedRegexScripts(ext: JsonObject?): List<me.rerere.rikkahub.data.model.AssistantRegex> {
+    if (ext == null) return emptyList()
+    val raw = ext["regex_scripts"] ?: ext["regexScripts"] ?: return emptyList()
+    return me.rerere.rikkahub.data.model.convertRegexScriptsFromSillyTavern(raw)
 }
 
 /** 官方深度提示（extensions.depth_prompt）解析 */
