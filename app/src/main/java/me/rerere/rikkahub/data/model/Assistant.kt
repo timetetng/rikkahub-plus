@@ -256,7 +256,16 @@ fun String.replaceRegexesTavern(
         }
         // 兜底：单条正则出任何问题都不应该把整个 UI 搞崩（2.10.3 的闪退就是这么来的：
         // 一条非法模式被抛到渲染路径上）。坏正则退回原文，保证其余正则照常生效。
-        runCatching { applyTavernRegex(acc, rule, macros) }.getOrDefault(acc)
+        val next = runCatching { applyTavernRegex(acc, rule, macros) }.getOrDefault(acc)
+        // 诊断：点名哪条正则改动了文本、改了多少（正文被吃掉这类问题靠这个直接定位）
+        if (next.length != acc.length) {
+            android.util.Log.i(
+                "TavernDiag",
+                "正则[" + rule.name + "] visualOnly=" + rule.visualOnly +
+                    " scope=" + rule.affectingScope + "  " + acc.length + " → " + next.length,
+            )
+        }
+        next
     }
 }
 
