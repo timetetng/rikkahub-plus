@@ -147,6 +147,53 @@ internal fun escapeTableMathPipes(content: String, isInCodeBlock: (Int) -> Boole
         }
     }
 
+// 夹在段落里的块级公式：$$…$$ 只有独占一行、且上下有空行时才会被解析成块级数学节点；
+// 紧贴前一行文字时它退化成普通文本，公式原样显示。这里把这种 $$…$$ 降级成行内 $…$
+// （段落里的行内公式解析是稳的）。独立成段的块级公式一律不动。
+private val BLOCK_MATH_SPAN_REGEX = Regex("""\$\$([\s\S]+?)\$\$""")
+
+internal fun normalizeInlineBlockMath(content: String, isInCodeBlock: (Int) -> Boolean): String =
+    BLOCK_MATH_SPAN_REGEX.replace(content) { m ->
+        if (isInCodeBlock(m.range.first)) {
+            m.value
+        } else {
+            val start = m.range.first
+            val end = m.range.last + 1
+            val lineStart = content.lastIndexOf('\n', start - 1) + 1
+            val lineEnd = content.indexOf('\n', end).let { if (it == -1) content.length else it }
+            if (content.substring(lineStart, start).isNotBlank() ||
+                content.substring(end, lineEnd).isNotBlank()
+            ) {
+                // 与同行其他文字混排，交给原逻辑
+                m.value
+            } else {
+                val prevLine = if (lineStart <= 1) {
+                    ""
+                } else {
+                    content.substring(
+                        content.lastIndexOf('\n', lineStart - 2) + 1,
+                        lineStart - 1
+                    )
+                }
+                val nextLine = if (lineEnd >= content.length) {
+                    ""
+                } else {
+                    val nextStart = lineEnd + 1
+                    content.substring(
+                        nextStart,
+                        content.indexOf('\n', nextStart).let { if (it == -1) content.length else it }
+                    )
+                }
+                if (prevLine.isBlank() && nextLine.isBlank()) {
+                    // 独立成段，保持块级渲染
+                    m.value
+                } else {
+                    "${'$'}${m.groupValues[1].trim()}${'$'}"
+                }
+            }
+        }
+    }
+
 // 预处理markdown内容
 private fun preProcess(content: String): String {
     // 先找出所有代码块的位置
@@ -182,6 +229,8 @@ private fun preProcess(content: String): String {
     }
 
     result = escapeTableMathPipes(result) { pos -> isInCodeBlock(pos) }
+
+    result = normalizeInlineBlockMath(result) { pos -> isInCodeBlock(pos) }
 
     return result
 }
