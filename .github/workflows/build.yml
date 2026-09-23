@@ -21,6 +21,21 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '21'
+      # web 模块的 preBuild 会执行 `pnpm run build` 打包浏览器端界面（WebUI），必须先备好 Node + pnpm
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web-ui/pnpm-lock.yaml
+      # gradle 的 buildWebUi 任务只跑 build 不跑 install，需在此提前安装依赖
+      - name: Install web-ui dependencies
+        working-directory: web-ui
+        run: pnpm install --frozen-lockfile
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -42,7 +57,7 @@ jobs:
         run: |
           chmod +x gradlew
           rm -rf app/build/python/  # 清理之前失败构建的脏缓存
-          ./gradlew assembleRelease -x :web:buildWebUi --no-build-cache --stacktrace 2>&1 | tee build.log
+          ./gradlew assembleRelease --no-build-cache --stacktrace 2>&1 | tee build.log
           exit ${PIPESTATUS[0]}
       - name: Upload build log
         uses: actions/upload-artifact@v4
