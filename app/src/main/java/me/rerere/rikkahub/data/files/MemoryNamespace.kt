@@ -46,9 +46,13 @@ object MemoryNamespace {
         // 2) 首次：以卡名建目录；被别的卡占了就追加序号
         var dir = File(root, want)
         var n = 2
-        while (dir.exists() && ownerOf(dir).isNotEmpty() && ownerOf(dir) != id && n <= 50) {
+        while (n <= 50 && dir.exists() && ownerOf(dir).isNotEmpty() && ownerOf(dir) != id) {
             dir = File(root, "$want-$n")
             n++
+        }
+        // 兜底：同名过多时改用 id 短码，绝不抢占别人的目录
+        if (dir.exists() && ownerOf(dir).isNotEmpty() && ownerOf(dir) != id) {
+            dir = File(root, "$want-${id.take(8)}")
         }
         if (!dir.exists()) dir.mkdirs()
         runCatching { File(dir, ID_FILE).writeText(id) }
