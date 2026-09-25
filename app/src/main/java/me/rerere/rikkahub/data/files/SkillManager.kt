@@ -228,6 +228,7 @@ class SkillManager(
                     ?: plugin?.allowedTools ?: emptyList(),
                 userInvocable = frontmatter["user-invocable"]?.toBooleanStrictOrNull() ?: false,
                 disableModelInvocation = frontmatter["disable-model-invocation"]?.toBooleanStrictOrNull() ?: false,
+                alwaysOn = frontmatter["always"]?.toBooleanStrictOrNull() ?: false,
                 triggers = frontmatter["triggers"]?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toList()
                     ?: plugin?.triggers ?: emptyList(),
                 category = frontmatter["category"] ?: plugin?.category,
@@ -274,6 +275,7 @@ data class SkillMetadata(
     val allowedTools: List<String> = emptyList(),
     val userInvocable: Boolean = false,          // 用户可主动调用（/skill name）
     val disableModelInvocation: Boolean = false,  // 纯脚本不调模型
+    val alwaysOn: Boolean = false,                     // 不受 enabledSkills 限制，所有助手默认可用
     val triggers: List<String> = emptyList(),          // 自动触发关键词
     val category: String? = null,                      // 分类标签
     val injectPosition: String? = null,                // before_system / after_system / in_chat

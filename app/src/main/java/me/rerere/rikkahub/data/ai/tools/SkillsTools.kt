@@ -18,7 +18,7 @@ fun createSkillTools(
     allSkills: List<SkillMetadata>,
     skillManager: SkillManager? = null,
 ): List<Tool> {
-    val available = allSkills.filter { it.name in enabledSkills }
+    val available = allSkills.filter { it.name in enabledSkills || it.alwaysOn }
     if (available.isEmpty()) return emptyList()
 
     val byCategory = available.groupBy { it.category ?: "其他" }
@@ -76,9 +76,8 @@ fun createSkillTools(
             execute = { args ->
                 val obj = args.jsonObject
                 val name = obj["name"]?.jsonPrimitive?.content ?: error("name required")
-                if (name !in enabledSkills) error("'$name' not available")
                 val skill = available.find { it.name == name }
-                    ?: error("Skill '$name' not found")
+                    ?: error("Skill '$name' not available")
 
                 val filePath = obj["file_path"]?.jsonPrimitive?.content
                 val content = if (filePath.isNullOrBlank()) {

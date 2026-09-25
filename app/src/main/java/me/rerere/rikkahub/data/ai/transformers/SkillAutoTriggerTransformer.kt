@@ -20,10 +20,9 @@ object SkillAutoTriggerTransformer : InputMessageTransformer, KoinComponent {
         messages: List<UIMessage>,
     ): List<UIMessage> {
         val enabledNames = ctx.assistant.enabledSkills
-        if (enabledNames.isEmpty()) return messages
 
         val allSkills = skillManager.listSkills()
-        val enabledSkills = allSkills.filter { it.name in enabledNames }
+        val enabledSkills = allSkills.filter { it.name in enabledNames || it.alwaysOn }
         if (enabledSkills.isEmpty()) return messages
 
         // 拼接上下文用于匹配

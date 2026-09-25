@@ -192,6 +192,16 @@ class GenerationHandler(
                     appendLine()
                     append(buildRecentChatsPrompt(assistant, conversationRepo))
                 }
+
+                appendLine()
+                val memNs = me.rerere.rikkahub.data.files.MemoryNamespace.resolve(context, assistant)
+                val memDir = me.rerere.rikkahub.data.files.MemoryNamespace.dirPath(context, memNs)
+                appendLine("<long_term_memory>")
+                appendLine("你的长期记忆命名空间是「$memNs」，目录 $memDir。")
+                appendLine("- 开工做正事前先 use_skill(name='memory') 读手册，再按需读你自己的记忆文件。")
+                appendLine("- 写记忆用 file 工具写上面那个目录，改旧行不追加，写完读回确认。")
+                appendLine("- 本卡若不需要长期记忆，忽略本段。")
+                append("</long_term_memory>")
             },
             constraints = emptyList(),
         )
