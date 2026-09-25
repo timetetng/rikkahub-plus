@@ -28,7 +28,7 @@ object MemoryNamespace {
     /** 解析该助手的记忆命名空间（目录不存在则建），返回目录名 */
     fun resolve(context: Context, assistant: Assistant): String {
         val root = memoriesRoot(context)
-        val id = assistant.id
+        val id = assistant.id.toString()
         val want = sanitize(assistant.name).ifBlank { id.take(8) }
 
         // 1) 按 id 认领 —— 改名也能找回旧目录，顺手迁移成新名字
