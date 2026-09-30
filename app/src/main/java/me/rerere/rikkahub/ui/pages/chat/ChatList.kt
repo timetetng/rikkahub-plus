@@ -87,6 +87,7 @@ import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.Settings
@@ -271,6 +272,11 @@ private fun ChatListNormal(
             .flatMap { it.models }
             .associateBy { it.id }
     }
+    val providerByModelId = remember(settings.providers) {
+        buildMap<Uuid, ProviderSetting> {
+            settings.providers.forEach { p -> p.models.forEach { m -> put(m.id, p) } }
+        }
+    }
     val lastMessageIndex = conversation.messageNodes.lastIndex
 
     Box(
@@ -335,6 +341,7 @@ private fun ChatListNormal(
                         ChatMessage(
                             node = node,
                             model = node.currentMessage.modelId?.let(modelById::get),
+                            provider = node.currentMessage.modelId?.let(providerByModelId::get),
                             assistant = assistant,
                             loading = loading && index == lastMessageIndex,
                             onRegenerate = {

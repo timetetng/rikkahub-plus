@@ -9,15 +9,31 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import me.rerere.ai.provider.BalanceOption
+import me.rerere.ai.provider.CustomHeader
 import me.rerere.ai.provider.Modality
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelAbility
+import me.rerere.ai.provider.ModelType
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
 import kotlin.uuid.Uuid
 
 val DEFAULT_AUTO_MODEL_ID = Uuid.parse("b7055fb4-39f9-4042-a88a-0d80ed76cf08")
+
+/** OpenCode Go 要求的稳定会话请求头，只读 key 即可用，无需手工配。 */
+private const val OPENCODE_GO_SESSION = "rikkahub-opencode-go"
+
+private fun opencodeGoModel(modelId: String, displayName: String): Model =
+    Model(
+        modelId = modelId,
+        displayName = displayName,
+        type = ModelType.CHAT,
+        customHeaders = listOf(CustomHeader("x-opencode-session", OPENCODE_GO_SESSION)),
+        inputModalities = listOf(Modality.TEXT),
+        outputModalities = listOf(Modality.TEXT),
+        abilities = listOf(ModelAbility.TOOL, ModelAbility.REASONING),
+    )
 
 val DEFAULT_PROVIDERS = listOf(
     ProviderSetting.OpenAI(
@@ -308,5 +324,48 @@ val DEFAULT_PROVIDERS = listOf(
                 }
             )
         }
+    ),
+    ProviderSetting.OpenAI(
+        id = Uuid.parse("7c3a2b1e-9d7f-4c5a-b8e2-1f3d5a7c9e04"),
+        name = "OpenCode Go",
+        baseUrl = "https://opencode.ai/zen/go/v1",
+        chatCompletionsPath = "/chat/completions",
+        apiKey = "",
+        enabled = true,
+        builtIn = true,
+        description = {
+            Text(
+                text = buildAnnotatedString {
+                    append("OpenCode 官方 Go 订阅（月付，含固定用量）。\n")
+                    append("只填 API key 即用：已内置 x-opencode-session 请求头、近5h/周/月用量查询。\n")
+                    append("官网：")
+                    withLink(LinkAnnotation.Url("https://opencode.ai")) {
+                        withStyle(SpanStyle(MaterialTheme.colorScheme.primary)) {
+                            append("opencode.ai")
+                        }
+                    }
+                }
+            )
+        },
+        shortDescription = {
+            Text(text = "OpenCode Go 订阅，只填 key，自带近5h/周/月用量")
+        },
+        balanceOption = BalanceOption(
+            enabled = true,
+            apiPath = "/usage",
+            resultPath = "\"近5h \" ++ usage.rolling.percent ++ \"% · 周 \" ++ usage.weekly.percent ++ \"% · 月 \" ++ usage.monthly.percent ++ \"%\"",
+        ),
+        models = listOf(
+            opencodeGoModel("glm-5.3-flash", "GLM-5.3-Flash"),
+            opencodeGoModel("glm-5.3", "GLM-5.3"),
+            opencodeGoModel("glm-5.2", "GLM-5.2"),
+            opencodeGoModel("kimi-k3", "Kimi K3"),
+            opencodeGoModel("longcat-2.0", "LongCat-2.0"),
+            opencodeGoModel("deepseek-v4-flash", "DeepSeek V4 Flash"),
+            opencodeGoModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash"),
+            opencodeGoModel("deepseek-v4-pro", "DeepSeek V4 Pro"),
+            opencodeGoModel("hy3", "Hy3"),
+            opencodeGoModel("mimo-v2.6-flash", "MiMo-V2.6-Flash"),
+        ),
     ),
 )

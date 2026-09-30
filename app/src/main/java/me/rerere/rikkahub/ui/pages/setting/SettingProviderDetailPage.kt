@@ -286,7 +286,7 @@ private fun SettingProviderConfigPage(
                 balanceOption = internalProvider.balanceOption,
                 onEdit = { internalProvider = internalProvider.copyProvider(balanceOption = it) }
             )
-            ProviderBalanceText(providerSetting = provider, style = MaterialTheme.typography.labelSmall)
+            ProviderBalanceText(providerSetting = internalProvider, style = MaterialTheme.typography.labelSmall)
         }
 
         Row(

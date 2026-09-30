@@ -21,6 +21,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.MoneyBag02
 import me.rerere.rikkahub.utils.SimpleCache
 import me.rerere.rikkahub.utils.toDp
+import kotlinx.coroutines.CancellationException
 import org.koin.compose.koinInject
 import java.util.concurrent.TimeUnit
 
@@ -49,14 +50,17 @@ fun ProviderBalanceText(
             value = cachedBalance
         } else {
             // Fetch balance from API
-            runCatching {
+            try {
                 val balance = providerManager.getProviderByType(providerSetting).getBalance(providerSetting)
                 // Cache the result
                 cache.put("${providerSetting.id},${providerSetting.balanceOption.hashCode()}", balance)
                 value = balance
-            }.onFailure {
+            } catch (e: CancellationException) {
+                // 组合离开/重启导致的正常协程取消，不当作余额错误显示
+                throw e
+            } catch (e: Exception) {
                 // Handle error
-                val errorMsg = "Error: ${it.message}"
+                val errorMsg = "Error: ${e.message}"
                 // Don't cache error messages
                 value = errorMsg
             }

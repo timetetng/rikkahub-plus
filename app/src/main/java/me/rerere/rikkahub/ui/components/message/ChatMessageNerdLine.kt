@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import kotlinx.datetime.toJavaLocalDateTime
+import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.ui.UIMessage
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Clock02
@@ -24,6 +25,7 @@ import me.rerere.hugeicons.stroke.Download04
 import me.rerere.hugeicons.stroke.Upload02
 import me.rerere.hugeicons.stroke.Zap
 import me.rerere.rikkahub.ui.context.LocalSettings
+import me.rerere.rikkahub.ui.components.ai.ProviderBalanceText
 import me.rerere.rikkahub.utils.formatNumber
 import me.rerere.rikkahub.utils.toFixed
 import java.time.Duration
@@ -35,6 +37,7 @@ import java.time.Duration
 fun ChatMessageNerdLine(
     message: UIMessage,
     modifier: Modifier = Modifier,
+    provider: ProviderSetting? = null,
     color: Color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f),
 ) {
     val settings = LocalSettings.current.displaySetting
@@ -115,6 +118,9 @@ fun ChatMessageNerdLine(
                             }
                         )
                     }
+                }
+                if (provider is ProviderSetting.OpenAI && provider.baseUrl.contains("opencode.ai")) {
+                    ProviderBalanceText(providerSetting = provider, color = color)
                 }
             }
         }
