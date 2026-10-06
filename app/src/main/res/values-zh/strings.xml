@@ -1844,4 +1844,18 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
   <string name="setting_update_reminder_pause_days">%1$d 天</string>
   <string name="setting_update_reminder_resume_now">立即恢复</string>
+
+  <!-- 选中文本菜单（沈墨 fork） -->
+  <string name="selection_menu_search">搜索</string>
+  <string name="selection_menu_explain">解释</string>
+  <string name="selection_menu_explain_loading">思考中…</string>
+  <string name="selection_menu_explain_empty">（空）</string>
+  <string name="setting_selection_menu_title">选中文本菜单</string>
+  <string name="setting_selection_menu_search_title">浏览器搜索</string>
+  <string name="setting_selection_menu_search_desc">选中文字后的菜单里多一个「搜索」</string>
+  <string name="setting_selection_menu_search_engine_title">搜索引擎</string>
+  <string name="setting_selection_menu_change">更改</string>
+  <string name="setting_selection_menu_explain_title">AI 解释</string>
+  <string name="setting_selection_menu_explain_desc">给选中文字出释义、音标、词性与例句（等于翻译 + 读音 + 用法）</string>
+  <string name="setting_selection_menu_explain_lang_title">解释语言</string>
 </resources>

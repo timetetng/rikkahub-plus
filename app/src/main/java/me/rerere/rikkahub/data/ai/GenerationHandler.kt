@@ -910,6 +910,49 @@ class GenerationHandler(
 }
 
 /**
+ * 单轮纯文本生成：给一段现成的 prompt，流式吐回文本。
+ *
+ * 给「选中文本 → 解释」这类一次性小请求用（无历史、无工具、无 transformer）。
+ * 刻意与 translateText 分开写，避免动到既有翻译链路。
+ */
+fun streamPromptText(
+    settings: Settings,
+    modelId: Uuid,
+    prompt: String,
+    reasoningBudget: Int = 0,
+    onStreamUpdate: ((String) -> Unit)? = null,
+): Flow<String> = flow {
+    val model = settings.providers.findModelById(modelId)
+        ?: error("Model not found: $modelId")
+    val provider = model.findProvider(settings.providers)
+        ?: error("Provider not found")
+
+    val providerHandler = providerManager.getProviderByType(provider)
+    val streamChunkHandler = StreamChunkHandler(model)
+
+    var messages = listOf(UIMessage.user(prompt))
+    var generatedText = ""
+
+    providerHandler.streamText(
+        providerSetting = provider,
+        messages = messages,
+        params = TextGenerationParams(
+            model = model,
+            reasoningLevel = ReasoningLevel.fromBudgetTokens(reasoningBudget),
+            customHeaders = model.customHeaders,
+        ),
+    ).collect { chunk ->
+        messages = streamChunkHandler.handle(messages, chunk)
+        generatedText = messages.lastOrNull()?.toText() ?: ""
+
+        if (generatedText.isNotBlank()) {
+            onStreamUpdate?.invoke(generatedText)
+            emit(generatedText)
+        }
+    }
+}.flowOn(Dispatchers.IO)
+
+/**
  * 执行单个工具调用（提取逻辑以避免并行/串行分支重复）
  */
 private suspend fun executeToolCall(

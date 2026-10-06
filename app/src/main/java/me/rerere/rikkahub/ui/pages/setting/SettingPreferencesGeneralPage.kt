@@ -1,17 +1,21 @@
 package me.rerere.rikkahub.ui.pages.setting
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,7 +32,15 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.DisplaySetting
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
+import me.rerere.rikkahub.ui.components.selection.EXPLAIN_LANG_EN
+import me.rerere.rikkahub.ui.components.selection.EXPLAIN_LANG_ZH
+import me.rerere.rikkahub.ui.components.selection.PREF_SELECTION_ENABLE_EXPLAIN
+import me.rerere.rikkahub.ui.components.selection.PREF_SELECTION_ENABLE_SEARCH
+import me.rerere.rikkahub.ui.components.selection.PREF_SELECTION_EXPLAIN_LANG
+import me.rerere.rikkahub.ui.components.selection.PREF_SELECTION_SEARCH_ENGINE
+import me.rerere.rikkahub.ui.components.selection.SelectionSearchEngine
 import me.rerere.rikkahub.ui.hooks.rememberSharedPreferenceBoolean
+import me.rerere.rikkahub.ui.hooks.rememberSharedPreferenceString
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.plus
 import org.koin.androidx.compose.koinViewModel
@@ -297,6 +309,120 @@ fun SettingPreferencesGeneralPage(vm: SettingVM = koinViewModel()) {
                             )
                         },
                     )
+                }
+            }
+
+            item {
+                val selectionSearchEnabled by rememberSharedPreferenceBoolean(
+                    PREF_SELECTION_ENABLE_SEARCH,
+                    true
+                )
+                val selectionExplainEnabled by rememberSharedPreferenceBoolean(
+                    PREF_SELECTION_ENABLE_EXPLAIN,
+                    true
+                )
+                var searchEngineId by rememberSharedPreferenceString(
+                    PREF_SELECTION_SEARCH_ENGINE,
+                    SelectionSearchEngine.GOOGLE.id
+                )
+                var explainLang by rememberSharedPreferenceString(
+                    PREF_SELECTION_EXPLAIN_LANG,
+                    EXPLAIN_LANG_ZH
+                )
+                var showEngineMenu by remember { mutableStateOf(false) }
+                var showExplainLangMenu by remember { mutableStateOf(false) }
+
+                CardGroup(
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    title = { Text(stringResource(R.string.setting_selection_menu_title)) },
+                ) {
+                    item(
+                        headlineContent = { Text(stringResource(R.string.setting_selection_menu_search_title)) },
+                        supportingContent = { Text(stringResource(R.string.setting_selection_menu_search_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = selectionSearchEnabled,
+                                onCheckedChange = { selectionSearchEnabled = it }
+                            )
+                        },
+                    )
+                    if (selectionSearchEnabled) {
+                        item(
+                            headlineContent = { Text(stringResource(R.string.setting_selection_menu_search_engine_title)) },
+                            supportingContent = { Text(SelectionSearchEngine.fromId(searchEngineId).displayName) },
+                            trailingContent = {
+                                Box {
+                                    TextButton(onClick = { showEngineMenu = true }) {
+                                        Text(stringResource(R.string.setting_selection_menu_change))
+                                    }
+                                    DropdownMenu(
+                                        expanded = showEngineMenu,
+                                        onDismissRequest = { showEngineMenu = false }
+                                    ) {
+                                        SelectionSearchEngine.values().forEach { engine ->
+                                            DropdownMenuItem(
+                                                text = { Text(engine.displayName) },
+                                                onClick = {
+                                                    searchEngineId = engine.id
+                                                    showEngineMenu = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                        )
+                    }
+                    item(
+                        headlineContent = { Text(stringResource(R.string.setting_selection_menu_explain_title)) },
+                        supportingContent = { Text(stringResource(R.string.setting_selection_menu_explain_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = selectionExplainEnabled,
+                                onCheckedChange = { selectionExplainEnabled = it }
+                            )
+                        },
+                    )
+                    if (selectionExplainEnabled) {
+                        item(
+                            headlineContent = { Text(stringResource(R.string.setting_selection_menu_explain_lang_title)) },
+                            supportingContent = {
+                                Text(
+                                    if (explainLang == EXPLAIN_LANG_EN) {
+                                        stringResource(R.string.language_english)
+                                    } else {
+                                        stringResource(R.string.language_simplified_chinese)
+                                    }
+                                )
+                            },
+                            trailingContent = {
+                                Box {
+                                    TextButton(onClick = { showExplainLangMenu = true }) {
+                                        Text(stringResource(R.string.setting_selection_menu_change))
+                                    }
+                                    DropdownMenu(
+                                        expanded = showExplainLangMenu,
+                                        onDismissRequest = { showExplainLangMenu = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.language_simplified_chinese)) },
+                                            onClick = {
+                                                explainLang = EXPLAIN_LANG_ZH
+                                                showExplainLangMenu = false
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.language_english)) },
+                                            onClick = {
+                                                explainLang = EXPLAIN_LANG_EN
+                                                showExplainLangMenu = false
+                                            }
+                                        )
+                                    }
+                                }
+                            },
+                        )
+                    }
                 }
             }
         }

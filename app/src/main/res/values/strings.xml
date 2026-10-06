@@ -1842,4 +1842,18 @@
   <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
   <string name="setting_update_reminder_pause_days">%1$d days</string>
   <string name="setting_update_reminder_resume_now">Resume now</string>
+
+  <!-- 选中文本菜单（沈墨 fork） -->
+  <string name="selection_menu_search">Search</string>
+  <string name="selection_menu_explain">Explain</string>
+  <string name="selection_menu_explain_loading">Thinking…</string>
+  <string name="selection_menu_explain_empty">(empty)</string>
+  <string name="setting_selection_menu_title">Text selection menu</string>
+  <string name="setting_selection_menu_search_title">Search in browser</string>
+  <string name="setting_selection_menu_search_desc">Add a Search item to the menu shown after selecting text</string>
+  <string name="setting_selection_menu_search_engine_title">Search engine</string>
+  <string name="setting_selection_menu_change">Change</string>
+  <string name="setting_selection_menu_explain_title">Explain with AI</string>
+  <string name="setting_selection_menu_explain_desc">Meaning, IPA, part of speech and example sentences for the selected text</string>
+  <string name="setting_selection_menu_explain_lang_title">Explanation language</string>
 </resources>

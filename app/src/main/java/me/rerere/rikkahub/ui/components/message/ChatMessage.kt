@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
@@ -85,6 +84,7 @@ import me.rerere.rikkahub.data.model.resolveRegexes
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
 import me.rerere.rikkahub.ui.components.richtext.ZoomableAsyncImage
 import me.rerere.rikkahub.ui.components.richtext.buildMarkdownPreviewHtml
+import me.rerere.rikkahub.ui.components.selection.SelectableMessageText
 import me.rerere.rikkahub.ui.components.webview.WebViewContentCache
 import me.rerere.rikkahub.ui.components.ui.ChainOfThought
 import me.rerere.rikkahub.ui.components.ui.Favicon
@@ -448,7 +448,8 @@ private fun MessagePartsBlock(
                         if (loading) {
                             textContent()
                         } else {
-                            SelectionContainer {
+                            // 选中菜单（搜索 / 解释）挂在这里，见 ui/components/selection/SelectionActions.kt
+                            SelectableMessageText {
                                 textContent()
                             }
                         }
