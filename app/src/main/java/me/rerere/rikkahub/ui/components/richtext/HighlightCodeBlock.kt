@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import me.rerere.rikkahub.ui.components.selection.SelectableMessageText
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -332,8 +333,8 @@ private fun CodeBlockDefault(
             }
         }
 
-        // 代码列
-        SelectionContainer {
+        // 代码列（选中菜单：搜索 / 解释）
+        SelectableMessageText {
             CodeHighlightText(
                 code = displayCode,
                 language = language,

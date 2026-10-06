@@ -48,6 +48,7 @@ import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.data.model.resolveRegexes
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
+import me.rerere.rikkahub.ui.components.selection.SelectableMessageText
 import me.rerere.rikkahub.ui.components.ui.ChainOfThoughtScope
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.modifier.shimmer
@@ -201,7 +202,8 @@ private fun ReasoningContent(
         if (loading) {
             reasoningContent()
         } else {
-            SelectionContainer {
+            // 选中菜单（搜索 / 解释）与消息正文同一套，见 ui/components/selection/SelectionActions.kt
+            SelectableMessageText {
                 reasoningContent()
             }
         }

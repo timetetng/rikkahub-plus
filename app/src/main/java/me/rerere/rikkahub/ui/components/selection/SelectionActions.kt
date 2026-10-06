@@ -174,23 +174,29 @@ fun SelectableMessageText(
     Box(
         modifier = modifier.appendTextContextMenuComponents {
             // 只有「本容器自己选中了文字」才挂这两项：
-            // 嵌套的 SelectionContainer（比如代码块）选中的是它自己的文字，这里读不到 → 自然不显示
-            val selectedText = selectionState.selectedTexts
-                .joinToString("\n") { it.text }
-                .trim()
-            if (selectedText.isNotEmpty()) {
+            // 嵌套的 SelectionContainer（代码块 / 思维链）用的是它们自己的 state，这里读不到 →
+            // 不显示；那两处各自包了一层 SelectableMessageText，由它们自己出菜单项。
+            fun currentSelection(): String =
+                selectionState.selectedTexts.joinToString("\n") { it.text }.trim()
+
+            if (currentSelection().isNotEmpty()) {
                 if (searchEnabled) {
                     item(key = SelectionSearchItemKey, label = searchLabel) {
-                        context.openUrl(
-                            SelectionSearchEngine.fromId(searchEngineId).buildUrl(selectedText)
-                        )
+                        // 点的时候再读一次：菜单是快照式构建的，选中态有可能在它之后才落定
+                        val text = currentSelection()
                         close()
+                        if (text.isNotEmpty()) {
+                            context.openUrl(
+                                SelectionSearchEngine.fromId(searchEngineId).buildUrl(text)
+                            )
+                        }
                     }
                 }
                 if (explainEnabled) {
                     item(key = SelectionExplainItemKey, label = explainLabel) {
-                        explainSource = selectedText
+                        val text = currentSelection()
                         close()
+                        if (text.isNotEmpty()) explainSource = text
                     }
                 }
             }
