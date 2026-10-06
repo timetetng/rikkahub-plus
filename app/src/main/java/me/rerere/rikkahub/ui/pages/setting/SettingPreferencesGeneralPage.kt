@@ -313,11 +313,11 @@ fun SettingPreferencesGeneralPage(vm: SettingVM = koinViewModel()) {
             }
 
             item {
-                val selectionSearchEnabled by rememberSharedPreferenceBoolean(
+                var selectionSearchEnabled by rememberSharedPreferenceBoolean(
                     PREF_SELECTION_ENABLE_SEARCH,
                     true
                 )
-                val selectionExplainEnabled by rememberSharedPreferenceBoolean(
+                var selectionExplainEnabled by rememberSharedPreferenceBoolean(
                     PREF_SELECTION_ENABLE_EXPLAIN,
                     true
                 )
