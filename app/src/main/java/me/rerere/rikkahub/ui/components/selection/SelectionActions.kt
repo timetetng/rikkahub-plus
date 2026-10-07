@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.components.selection
 
+import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,7 +13,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.contextmenu.builder.item
+import androidx.compose.foundation.text.contextmenu.data.TextContextMenuKeys
 import androidx.compose.foundation.text.contextmenu.modifier.appendTextContextMenuComponents
+import androidx.compose.foundation.text.contextmenu.modifier.filterTextContextMenuComponents
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.selection.rememberSelectionState
 import androidx.compose.foundation.verticalScroll
@@ -172,18 +175,42 @@ fun SelectableMessageText(
     }
 
     Box(
-        modifier = modifier.appendTextContextMenuComponents {
+        modifier = modifier
+            // 只留「复制 / 全选」+ 我们这两项。
+            // 系统会往这个菜单里塞一堆东西：PROCESS_TEXT（朗读 / 浏览器搜索 / 笔记 / AnkiDroid …）
+            // 加上智能选择项，一共七八项；浮动工具条塞不下就把**末尾**的挤进「⋮」溢出菜单，
+            // 而我们的项永远排在最后（builder 是从下往上收集的）→ 不清场就永远看不见。
+            .filterTextContextMenuComponents { component ->
+                when (component.key) {
+                    TextContextMenuKeys.CopyKey,
+                    TextContextMenuKeys.CutKey,
+                    TextContextMenuKeys.PasteKey,
+                    TextContextMenuKeys.SelectAllKey,
+                    TextContextMenuKeys.AutofillKey,
+                    SelectionSearchItemKey,
+                    SelectionExplainItemKey -> true
+
+                    else -> false
+                }
+            }
+            .appendTextContextMenuComponents {
             // 只有「本容器自己选中了文字」才挂这两项：
             // 嵌套的 SelectionContainer（代码块 / 思维链）用的是它们自己的 state，这里读不到 →
             // 不显示；那两处各自包了一层 SelectableMessageText，由它们自己出菜单项。
             fun currentSelection(): String =
                 selectionState.selectedTexts.joinToString("\n") { it.text }.trim()
 
+            Log.d(
+                "SelMenu",
+                "builder: n=${selectionState.selectedTexts.size} text=[${currentSelection().take(40)}]"
+            )
+
             if (currentSelection().isNotEmpty()) {
                 if (searchEnabled) {
                     item(key = SelectionSearchItemKey, label = searchLabel) {
                         // 点的时候再读一次：菜单是快照式构建的，选中态有可能在它之后才落定
                         val text = currentSelection()
+                        Log.d("SelMenu", "click search: [${text.take(40)}]")
                         close()
                         if (text.isNotEmpty()) {
                             context.openUrl(
@@ -195,6 +222,7 @@ fun SelectableMessageText(
                 if (explainEnabled) {
                     item(key = SelectionExplainItemKey, label = explainLabel) {
                         val text = currentSelection()
+                        Log.d("SelMenu", "click explain: [${text.take(40)}]")
                         close()
                         if (text.isNotEmpty()) explainSource = text
                     }

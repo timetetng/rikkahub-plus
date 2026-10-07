@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.compose.foundation.ComposeFoundationFlags
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.runtime.Composer
 import androidx.compose.runtime.tooling.ComposeStackTraceMode
 import androidx.core.app.NotificationChannelCompat
@@ -52,8 +53,14 @@ class RikkaHubApp : Application() {
         } catch (_: Exception) {}
     }
 
+    @OptIn(ExperimentalFoundationApi::class)
     override fun onCreate() {
         super.onCreate()
+        // 诊断：新文本上下文菜单开关在 release 包里的实际取值
+        // （R8 会常量折叠 ComposeFoundationFlags，甚至把类整个删掉 —— 必须打出来看）
+        runCatching {
+            Log.i("SelMenu", "isNewContextMenuEnabled=${ComposeFoundationFlags.isNewContextMenuEnabled}")
+        }.onFailure { Log.w("SelMenu", "flag read failed", it) }
         trace("onCreate start")
         try {
             startKoin {
