@@ -51,6 +51,7 @@ import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.GenerationHandler
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_SELECTION_EXPLAIN_PROMPT
+import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.hooks.rememberSharedPreferenceBoolean
@@ -318,15 +319,26 @@ private fun SelectionExplainCard(
                     .heightIn(max = 240.dp)
                     .verticalScroll(rememberScrollState()),
             ) {
-                Text(
-                    text = error ?: result.ifBlank { placeholder },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (error != null) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                )
+                when {
+                    error != null -> Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+
+                    result.isBlank() -> Text(
+                        text = placeholder,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    // 解释结果本来就是 Markdown（prompt 里写明 Plain Markdown），
+                    // 用应用自己的渲染器：加粗 / 列表 / 代码块 / 引用色都跟主题走
+                    else -> MarkdownBlock(
+                        content = result,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }
