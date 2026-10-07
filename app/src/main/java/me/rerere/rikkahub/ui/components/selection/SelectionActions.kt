@@ -144,7 +144,9 @@ fun SelectableMessageText(
 
         val targetLocale =
             if (explainLang == EXPLAIN_LANG_EN) Locale.ENGLISH else Locale.SIMPLIFIED_CHINESE
-        val prompt = DEFAULT_SELECTION_EXPLAIN_PROMPT.applyPlaceholders(
+        val prompt = settings.selectionExplainPrompt
+            .ifBlank { DEFAULT_SELECTION_EXPLAIN_PROMPT }
+            .applyPlaceholders(
             "source_text" to source,
             "target_lang" to targetLocale.getDisplayLanguage(Locale.ENGLISH),
         )

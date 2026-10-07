@@ -1703,6 +1703,8 @@
   <string name="setting_model_page_prompt_title">Title Generation</string>
   <string name="setting_model_page_prompt_suggestion">Chat Reply Suggestions</string>
   <string name="setting_model_page_prompt_ocr">OCR Recognition</string>
+  <string name="setting_model_page_prompt_selection_explain">Explain Selection</string>
+  <string name="setting_model_page_selection_explain_prompt_vars">Variables: Selected text: {source_text}, Answer language: {target_lang}</string>
   <string name="setting_model_page_prompt_compress">Context Compression</string>
   <string name="setting_display_page_bubble_opacity_title">Bubble Opacity</string>
   <string name="setting_provider_page_include_history_reasoning">Include History Reasoning</string>

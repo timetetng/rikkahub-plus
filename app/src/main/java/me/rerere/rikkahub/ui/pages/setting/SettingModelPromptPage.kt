@@ -30,6 +30,7 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_COMPRESS_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_OCR_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_SUGGESTION_PROMPT
+import me.rerere.rikkahub.data.ai.prompts.DEFAULT_SELECTION_EXPLAIN_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_TITLE_PROMPT
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_TRANSLATION_PROMPT
 import me.rerere.rikkahub.data.datastore.Settings
@@ -80,6 +81,17 @@ internal fun PromptSettingsPage(settings: Settings, vm: SettingVM, contentPaddin
                 promptValue = settings.ocrPrompt,
                 onPromptChange = { vm.updateSettings(settings.copy(ocrPrompt = it)) },
                 onResetPrompt = { vm.updateSettings(settings.copy(ocrPrompt = DEFAULT_OCR_PROMPT)) },
+            )
+        }
+        item {
+            PromptSettingItem(
+                title = stringResource(R.string.setting_model_page_prompt_selection_explain),
+                promptDescription = stringResource(R.string.setting_model_page_selection_explain_prompt_vars),
+                promptValue = settings.selectionExplainPrompt,
+                onPromptChange = { vm.updateSettings(settings.copy(selectionExplainPrompt = it)) },
+                onResetPrompt = {
+                    vm.updateSettings(settings.copy(selectionExplainPrompt = DEFAULT_SELECTION_EXPLAIN_PROMPT))
+                },
             )
         }
         item {
