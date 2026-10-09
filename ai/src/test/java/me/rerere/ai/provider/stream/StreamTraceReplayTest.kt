@@ -411,6 +411,12 @@ class StreamTraceReplayTest {
                         put("title", annotation.title)
                         put("url", annotation.url)
                     })
+                    UIMessageAnnotation.ExampleMessage -> add(buildJsonObject {
+                        put("type", "example_message")
+                    })
+                    UIMessageAnnotation.CharacterCardData -> add(buildJsonObject {
+                        put("type", "character_card")
+                    })
                 }
             }
         }
