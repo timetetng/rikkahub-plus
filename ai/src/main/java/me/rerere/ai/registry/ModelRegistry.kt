@@ -87,6 +87,14 @@ object ModelRegistry {
         toolReasoningAbility()
     }
 
+    // GPT-6 Codex family (Astra / Sol / Luna). OpenAI-compatible /models
+    // responses only expose model IDs, so capability inference lives here.
+    private val GPT_6 = defineModel {
+        tokens("gpt", "6")
+        visionInput()
+        toolReasoningAbility()
+    }
+
     private val GEMINI_20_FLASH = defineModel {
         tokens("gemini", "2", "0", "flash")
         visionInput()
@@ -555,6 +563,7 @@ object ModelRegistry {
         GPT_5_4_NANO,
         GPT_5_5,
         GPT_5_6,
+        GPT_6,
         GEMINI_20_FLASH,
         GEMINI_2_5_FLASH,
         GEMINI_2_5_PRO,

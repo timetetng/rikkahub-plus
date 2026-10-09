@@ -53,6 +53,8 @@ jobs:
           keyAlias=androiddebugkey
           keyPassword=android
           EOF
+      - name: Test model registry
+        run: ./gradlew :ai:testReleaseUnitTest --tests me.rerere.ai.registry.ModelRegistryTest --stacktrace
       - name: Build
         run: |
           chmod +x gradlew

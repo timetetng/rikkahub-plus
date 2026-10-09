@@ -22,6 +22,22 @@ class ModelRegistryTest {
     }
 
     @Test
+    fun testGpt6Capabilities() {
+        for (modelId in listOf("gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol")) {
+            assertEquals(
+                modelId,
+                listOf(Modality.TEXT, Modality.IMAGE),
+                ModelRegistry.MODEL_INPUT_MODALITIES.getData(modelId)
+            )
+            assertEquals(
+                modelId,
+                listOf(ModelAbility.TOOL, ModelAbility.REASONING),
+                ModelRegistry.MODEL_ABILITIES.getData(modelId)
+            )
+        }
+    }
+
+    @Test
     fun testGemini25() {
         assertTrue(ModelRegistry.GEMINI_LATEST.match("gemini-flash-latest"))
         assertTrue(ModelRegistry.GEMINI_LATEST.match("gemini-pro-latest"))
