@@ -200,6 +200,12 @@ class GenerationHandler(
                 appendLine("你的长期记忆命名空间是「$memNs」，目录 $memDir（不存在会自动建）。")
                 appendLine("- 要记住或回忆跨会话的事时，先 use_skill(name='memory') 读手册 —— 它会按这张卡的用途教你怎么记。")
                 appendLine("- 本卡若不需要长期记忆，忽略本段。")
+                val core = readCoreMemory(memDir, CORE_MEMORY_CAP)
+                if (core.isNotBlank()) {
+                    appendLine()
+                    appendLine("### 常驻核心记忆（core.md，超上限中段截断）")
+                    appendLine(core)
+                }
                 append("</long_term_memory>")
             },
             constraints = emptyList(),
@@ -1127,4 +1133,27 @@ private fun List<UIMessage>.withMessageNames(): List<UIMessage> = map { message 
     } else {
         message.copy(parts = listOf(UIMessagePart.Text("$name: ")) + message.parts)
     }
+}
+
+/** 常驻核心记忆的注入上限（字符）。超出则保留首尾、中段截断，细节靠 file read offset/limit 取。 */
+private const val CORE_MEMORY_CAP = 12000
+
+/**
+ * 读助手的常驻核心记忆：优先 core.md，没有则退回 index.md。
+ * 不存在或为空返回空串（此时不注入任何东西）。
+ */
+private fun readCoreMemory(dirPath: String, cap: Int): String {
+    val dir = java.io.File(dirPath)
+    val file = listOf("core.md", "index.md")
+        .map { java.io.File(dir, it) }
+        .firstOrNull { it.isFile }
+        ?: return ""
+    val raw = runCatching { file.readText() }.getOrDefault("").trim()
+    if (raw.isEmpty()) return ""
+    if (raw.length <= cap) return raw
+    val head = cap * 2 / 3
+    val tail = (cap - head - 80).coerceAtLeast(0)
+    return raw.take(head) +
+        "\n\n…（中段截断：全文 ${raw.length} 字符，完整内容用 file read offset/limit 分段取）…\n\n" +
+        raw.takeLast(tail)
 }

@@ -69,6 +69,14 @@ fun createSkillTools(
                             put("type", "string")
                             put("description", "Optional sub-file path from linked_files. Omit for main SKILL.md.")
                         })
+                        put("offset", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "1-based first line to return. Use with limit for big files instead of loading everything.")
+                        })
+                        put("limit", buildJsonObject {
+                            put("type", "integer")
+                            put("description", "Max lines to return (default: all). Output is prefixed with line numbers when paging.")
+                        })
                     },
                     required = listOf("name")
                 )
@@ -80,7 +88,7 @@ fun createSkillTools(
                     ?: error("Skill '$name' not available")
 
                 val filePath = obj["file_path"]?.jsonPrimitive?.content
-                val content = if (filePath.isNullOrBlank()) {
+                val raw = if (filePath.isNullOrBlank()) {
                     val body = skillManager?.readSkillBody(name)
                         ?: skill.skillFile.takeIf { it.exists() }?.let { SkillFrontmatterParser.extractBody(it.readText()) }
                         ?: error("Skill '$name' not found")
@@ -100,6 +108,19 @@ fun createSkillTools(
                         ?: error("Path outside skill directory")
                     if (!target.exists()) error("File '$filePath' not found")
                     target.readText()
+                }
+                val offset = obj["offset"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.coerceAtLeast(1)
+                val limit = obj["limit"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.coerceIn(1, 2000)
+                val content = if (offset == null && limit == null) raw else {
+                    val lines = raw.lines()
+                    val from = (offset ?: 1).coerceAtMost(lines.size + 1)
+                    val to = (from + (limit ?: 400) - 1).coerceAtMost(lines.size)
+                    buildString {
+                        for (i in from..to) appendLine("$i|${lines[i - 1]}")
+                        if (to < lines.size) {
+                            appendLine("…（共 ${lines.size} 行；下一段 offset=${to + 1}）")
+                        }
+                    }
                 }
                 listOf(UIMessagePart.Text(content))
             }
