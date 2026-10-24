@@ -120,6 +120,74 @@ fun splitLatex(
 }
 
 /**
+ * 行内公式按顶层运算符拆段，给文本流提供换行点 —— 否则一条长公式是一个不可分割的 inline 块，
+ * 超出屏幕宽度只会被裁掉，永远不换行。
+ *
+ * 宽度按字号估算（每字符约 0.55em），只用来决定在哪切，不做真实测量：
+ * 宁少切不多切，切点只落在括号层级为 0 的运算符后面，段内结构完整。
+ * 不拆时返回单个元素，调用方走原逻辑。
+ */
+fun splitInlineLatex(latex: String, maxWidthPx: Float, fontSizePx: Float): List<String> {
+    if (latex.isBlank() || maxWidthPx <= 0f) return listOf(latex)
+    val body = processLatex(latex)
+    val charPx = (fontSizePx * 0.55f).coerceAtLeast(1f)
+    if (body.length * charPx <= maxWidthPx) return listOf(latex)
+
+    val breaks = mutableListOf<Int>()
+    var depth = 0
+    var i = 0
+    while (i < body.length) {
+        val c = body[i]
+        if (c == '\\' && i + 1 < body.length) {
+            when (body[i + 1]) {
+                '{', '[' -> depth++
+                '}', ']' -> depth--
+                'l' -> if (body.startsWith("\\left", i)) {
+                    depth++
+                    i += 5
+                    continue
+                }
+                'r' -> if (body.startsWith("\\right", i)) {
+                    depth--
+                    i += 6
+                    continue
+                }
+            }
+            i += 2
+            continue
+        }
+        when (c) {
+            '{', '[' -> depth++
+            '}', ']' -> depth--
+            '+', '-', '=', ',', ';' -> if (depth == 0) breaks.add(i + 1)
+        }
+        i++
+    }
+    if (breaks.isEmpty()) return listOf(latex)
+
+    val pieces = mutableListOf<String>()
+    var start = 0
+    var prevBreak = -1
+    for (b in breaks) {
+        if ((b - start) * charPx > maxWidthPx) {
+            val cut = if (prevBreak > start) prevBreak else b
+            pieces.add(body.substring(start, cut))
+            start = cut
+        }
+        prevBreak = b
+    }
+    pieces.add(body.substring(start))
+    val cleaned = pieces.map { it.trim() }.filter { it.isNotEmpty() }
+    return if (cleaned.size <= 1) listOf(latex) else cleaned
+}
+
+/** 行内公式可用的横向像素宽度（粗估：屏幕宽 × 0.75，给气泡内边距留余量）。 */
+fun availableInlineMathWidthPx(): Float =
+    runCatching {
+        android.content.res.Resources.getSystem().displayMetrics.widthPixels * 0.75f
+    }.getOrDefault(1080f * 0.75f)
+
+/**
  * 行内公式的占位文本（InlineContent 的 alternateText）。
  *
  * 占位文本不是装饰：文本选择 / 复制 / 无障碍朗读拿到的都是它。原先写死 "[Latex]"，

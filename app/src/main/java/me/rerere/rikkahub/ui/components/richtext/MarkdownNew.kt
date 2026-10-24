@@ -1002,25 +1002,58 @@ private fun AnnotatedString.Builder.appendHtmlInlineElement(
             if (element.hasClass("math") && element.attr("inline") == "true") {
                 val formula = element.text()
                 if (enableLatexRendering) {
-                    appendInlineContent(formula, latexPlaceholder(latexCopySource(formula)))
-                    val (width, height) = with(density) {
-                        assumeLatexSize(latex = formula, fontSize = style.fontSize.toPx()).let {
-                            it.width().toSp() to it.height().toSp()
+                    val fontSizePx = with(density) { style.fontSize.toPx() }
+                    // 长公式在文本流里是一个不可切割的 inline 块，超出屏幕只会被裁掉。
+                    // 按顶层运算符拆段、段间插零宽空格，文本才有换行点。
+                    val pieces = splitInlineLatex(formula, availableInlineMathWidthPx(), fontSizePx)
+                    if (pieces.size <= 1) {
+                        appendInlineContent(formula, latexPlaceholder(latexCopySource(formula)))
+                        val (width, height) = with(density) {
+                            assumeLatexSize(latex = formula, fontSize = fontSizePx).let {
+                                it.width().toSp() to it.height().toSp()
+                            }
+                        }
+                        inlineContents.putIfAbsent(
+                            formula,
+                            InlineTextContent(
+                                placeholder = Placeholder(
+                                    width = width,
+                                    height = height,
+                                    placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
+                                ),
+                                children = {
+                                    MathInline(latex = formula, modifier = Modifier, fontSize = style.fontSize)
+                                },
+                            ),
+                        )
+                    } else {
+                        pieces.forEachIndexed { index, piece ->
+                            if (index > 0) append('\u200B')
+                            val segmentKey = "latex:${formula.hashCode()}:$index"
+                            appendInlineContent(
+                                segmentKey,
+                                if (index == 0) latexPlaceholder(latexCopySource(formula)) else "\u200B",
+                            )
+                            val (width, height) = with(density) {
+                                assumeLatexSize(latex = piece, fontSize = fontSizePx).let {
+                                    it.width().toSp() to it.height().toSp()
+                                }
+                            }
+                            inlineContents.putIfAbsent(
+                                segmentKey,
+                                InlineTextContent(
+                                    placeholder = Placeholder(
+                                        width = width,
+                                        height = height,
+                                        placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
+                                    ),
+                                    children = {
+                                        MathInline(latex = piece, modifier = Modifier, fontSize = style.fontSize)
+                                    },
+                                ),
+                            )
                         }
                     }
-                    inlineContents.putIfAbsent(
-                        formula,
-                        InlineTextContent(
-                            placeholder = Placeholder(
-                                width = width,
-                                height = height,
-                                placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
-                            ),
-                            children = {
-                                MathInline(latex = formula, modifier = Modifier, fontSize = style.fontSize)
-                            },
-                        ),
-                    )
                 } else {
                     withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 0.95.em)) {
                         append(formula)
