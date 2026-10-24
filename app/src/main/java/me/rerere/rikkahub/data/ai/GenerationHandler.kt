@@ -201,10 +201,16 @@ class GenerationHandler(
                 appendLine("- 要记住或回忆跨会话的事时，先 use_skill(name='memory') 读手册 —— 它会按这张卡的用途教你怎么记。")
                 appendLine("- 本卡若不需要长期记忆，忽略本段。")
                 val core = readCoreMemory(memDir, CORE_MEMORY_CAP)
-                if (core.isNotBlank()) {
+                if (core != null) {
                     appendLine()
-                    appendLine("### 常驻核心记忆（core.md，超上限中段截断）")
-                    appendLine(core)
+                    appendLine("### 常驻核心记忆（${core.first}，超 $CORE_MEMORY_CAP 字符则中段截断）")
+                    appendLine(core.second)
+                }
+                val listing = buildMemoryListing(memDir, core?.first)
+                if (listing.isNotBlank()) {
+                    appendLine()
+                    appendLine("### 记忆文件清单（正文未注入；要看就用 file read 带 offset/limit，别整篇读）")
+                    append(listing)
                 }
                 append("</long_term_memory>")
             },
@@ -1138,22 +1144,81 @@ private fun List<UIMessage>.withMessageNames(): List<UIMessage> = map { message 
 /** 常驻核心记忆的注入上限（字符）。超出则保留首尾、中段截断，细节靠 file read offset/limit 取。 */
 private const val CORE_MEMORY_CAP = 12000
 
+/** 清单最多列多少个记忆文件（再多就只给一行「另有 N 个」）。 */
+private const val MEMORY_LISTING_MAX = 60
+
+/** 文件头缓存：key = 路径:修改时间:长度，避免每轮重读几十个文件的头几行。 */
+private val memoryHeadCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+private fun memoryHeadOf(file: java.io.File): String {
+    val key = "${file.absolutePath}:${file.lastModified()}:${file.length()}"
+    memoryHeadCache[key]?.let { return it }
+    val head = runCatching {
+        file.bufferedReader().use { reader ->
+            buildString {
+                var line = reader.readLine()
+                var n = 0
+                while (line != null && n < 12) {
+                    appendLine(line)
+                    line = reader.readLine()
+                    n++
+                }
+            }
+        }
+    }.getOrDefault("")
+    if (memoryHeadCache.size > 512) memoryHeadCache.clear()
+    memoryHeadCache[key] = head
+    return head
+}
+
 /**
- * 读助手的常驻核心记忆：优先 core.md，没有则退回 index.md。
- * 不存在或为空返回空串（此时不注入任何东西）。
+ * 读助手的常驻核心记忆：profile.md → core.md → index.md，取第一个存在的。
+ * 返回（文件名, 正文）；不存在或为空返回 null（此时什么都不注入）。
  */
-private fun readCoreMemory(dirPath: String, cap: Int): String {
+private fun readCoreMemory(dirPath: String, cap: Int): Pair<String, String>? {
     val dir = java.io.File(dirPath)
-    val file = listOf("core.md", "index.md")
+    val file = listOf("profile.md", "core.md", "index.md")
         .map { java.io.File(dir, it) }
         .firstOrNull { it.isFile }
-        ?: return ""
+        ?: return null
     val raw = runCatching { file.readText() }.getOrDefault("").trim()
-    if (raw.isEmpty()) return ""
-    if (raw.length <= cap) return raw
-    val head = cap * 2 / 3
-    val tail = (cap - head - 80).coerceAtLeast(0)
-    return raw.take(head) +
-        "\n\n…（中段截断：全文 ${raw.length} 字符，完整内容用 file read offset/limit 分段取）…\n\n" +
-        raw.takeLast(tail)
+    if (raw.isEmpty()) return null
+    val body = if (raw.length <= cap) raw else {
+        val head = cap * 2 / 3
+        val tail = (cap - head - 80).coerceAtLeast(0)
+        raw.take(head) +
+            "\n\n…（中段截断：全文 ${raw.length} 字符，完整内容用 file read offset/limit 分段取）…\n\n" +
+            raw.takeLast(tail)
+    }
+    return file.name to body
+}
+
+/**
+ * 记忆文件清单：文件名 + 大小 + 修改日 + 首行标题。
+ * 正文不注入 —— 看到清单就知道有哪些文件，需要时自己带 offset/limit 去读。
+ */
+private fun buildMemoryListing(dirPath: String, exclude: String?): String {
+    val dir = java.io.File(dirPath)
+    if (!dir.isDirectory) return ""
+    val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".md", ignoreCase = true) }
+        ?.filter { it.name != exclude }
+        ?.sortedWith(compareByDescending<java.io.File> { it.lastModified() }.thenBy { it.name })
+        ?: return ""
+    if (files.isEmpty()) return ""
+    val fmt = java.text.SimpleDateFormat("MM-dd", java.util.Locale.US)
+    return buildString {
+        files.take(MEMORY_LISTING_MAX).forEach { f ->
+            val title = memoryHeadOf(f)
+                .lineSequence()
+                .map { it.trim().trimStart('#').trim() }
+                .firstOrNull { it.isNotEmpty() }
+                ?.take(80)
+                ?: ""
+            val kb = (f.length() / 1024).coerceAtLeast(1)
+            appendLine("- ${f.name}（${kb}KB，${fmt.format(java.util.Date(f.lastModified()))}）$title")
+        }
+        if (files.size > MEMORY_LISTING_MAX) {
+            appendLine("- …另有 ${files.size - MEMORY_LISTING_MAX} 个文件未列出")
+        }
+    }
 }

@@ -203,5 +203,24 @@ private fun processLatex(latex: String): String {
 // 命名色（red/blue/...）、#RRGGBB、r,g,b 三种写法都能被 \textcolor 吃下。
 private val colorDeclarationRegex = Regex("""\\color\s*\{([^{}]+)\}""")
 
+// JLaTeXMath 不支持 \tag：整条公式抛异常后只能退回显示源码。
+// 转成等价的尾部编号（\qquad + 括号）；编号里只留能安全进数学模式的字符，
+// 去空了就整个丢掉（宁可没编号，也别整条公式变成源码）。
+private val tagRegex = Regex("""\\tag\*?\{([^{}]*)\}""")
+private fun sanitizeTagLabel(raw: String): String =
+    raw.trim().filter { it.isLetterOrDigit() || it in ".-+*/_" }.replace('_', '-')
+
+// \\[4pt] 这类行距参数 JLaTeXMath 不支持，且 \[ 会被当成块级公式定界符。
+// 去掉参数只保留换行。
+private val lineBreakSpacingRegex = Regex("""\\\\\[[^\[\]]{0,20}\]""")
+
 private fun rewriteUnsupportedCommands(latex: String): String =
-    colorDeclarationRegex.replace(latex) { "\\textcolor{${it.groupValues[1]}}" }
+    latex
+        .replace(lineBreakSpacingRegex) { "\\\\" }
+        .let { colorDeclarationRegex.replace(it) { m -> "\\textcolor{${m.groupValues[1]}}" } }
+        .let { src ->
+            tagRegex.replace(src) { m ->
+                val label = sanitizeTagLabel(m.groupValues[1])
+                if (label.isEmpty()) "" else "\\qquad(\\mathrm{$label})"
+            }
+        }
