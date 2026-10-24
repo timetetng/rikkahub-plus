@@ -119,12 +119,22 @@ fun splitLatex(
     }.getOrElse { emptyList() }
 }
 
+// 能当断点的顶层关系符（断点放在符号之前，下一段从符号开头）。
+// 乘法类（\cdot / \times）不放进来：切出来会得到只有一个 \cdot 的碎块。
+private val breakCommandNames = setOf(
+    "ge", "geq", "le", "leq", "ne", "neq", "approx", "equiv", "sim", "to",
+    "rightarrow", "Rightarrow", "Leftrightarrow", "iff", "subset", "subseteq",
+    "in", "notin",
+)
+
 /**
  * 行内公式按顶层运算符拆段，给文本流提供换行点 —— 否则一条长公式是一个不可分割的 inline 块，
  * 超出屏幕宽度只会被裁掉，永远不换行。
  *
  * 宽度按字号估算（每字符约 0.55em），只用来决定在哪切，不做真实测量：
- * 宁少切不多切，切点只落在括号层级为 0 的运算符后面，段内结构完整。
+ * 宁少切不多切，切点只落在括号层级为 0 的运算符处，段内结构完整。
+ * 整条包在 `\left[...\right]` 里、只靠 `\ge` 连接这类“没有顶层 +-=”的公式，
+ * 用 `\right` 闭合处当兜底断点。
  * 不拆时返回单个元素，调用方走原逻辑。
  */
 fun splitInlineLatex(latex: String, maxWidthPx: Float, fontSizePx: Float): List<String> {
@@ -139,21 +149,63 @@ fun splitInlineLatex(latex: String, maxWidthPx: Float, fontSizePx: Float): List<
     while (i < body.length) {
         val c = body[i]
         if (c == '\\' && i + 1 < body.length) {
-            when (body[i + 1]) {
-                '{', '[' -> depth++
-                '}', ']' -> depth--
-                'l' -> if (body.startsWith("\\left", i)) {
+            val n = body[i + 1]
+            if (!n.isLetter()) {
+                when (n) {
+                    '{', '[' -> depth++
+                    '}', ']' -> depth--
+                    '\\' -> if (depth == 0) breaks.add(i + 2)
+                }
+                i += 2
+                continue
+            }
+            var j = i + 1
+            while (j < body.length && body[j].isLetter()) j++
+            val name = body.substring(i + 1, j)
+            when {
+                name == "left" -> {
                     depth++
-                    i += 5
+                    // \left 后面紧跟的定界符已经算进这一对里了，别重复计数
+                    i = if (j < body.length) j + 1 else j
                     continue
                 }
-                'r' -> if (body.startsWith("\\right", i)) {
+
+                name == "right" -> {
                     depth--
-                    i += 6
+                    var m = j
+                    if (m < body.length) m++ // 定界符
+                    while (m < body.length && (body[m] == '^' || body[m] == '_')) {
+                        m++
+                        if (m < body.length && body[m] == '{') {
+                            var d = 0
+                            while (m < body.length) {
+                                if (body[m] == '{') {
+                                    d++
+                                } else if (body[m] == '}') {
+                                    d--
+                                    if (d == 0) {
+                                        m++
+                                        break
+                                    }
+                                }
+                                m++
+                            }
+                        } else if (m < body.length) {
+                            m++
+                        }
+                    }
+                    if (depth <= 0) breaks.add(m)
+                    i = m
+                    continue
+                }
+
+                depth == 0 && name in breakCommandNames -> {
+                    breaks.add(j)
+                    i = j
                     continue
                 }
             }
-            i += 2
+            i = j
             continue
         }
         when (c) {
