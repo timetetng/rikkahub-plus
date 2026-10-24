@@ -1,5 +1,4 @@
 #!/system/bin/sh
-# 这是 /data/local/ws 的可移植副本（容器文件/命令助手）。换容器用 WS_NAME=<名字> 或改下面的 NAME 默认值。
 # ws — Droidspaces 容器「文件/命令」助手  (v5, 2026-09-12)
 #
 # 用法:  su -c '/data/local/ws <子命令> [参数...]'
@@ -89,7 +88,7 @@ bgjob(){ # $1=名字
   [ -n "$B" ] || { echo "ws: 警告: stdin 为空（还是收完脚本再跑吧）" >&2; exit 2; }
   ensure
   U="ws-$1"
-  S='mkdir -p '"$JOB"' && echo "$1" | base64 -d > "'"$JOB"'/$2.sh" && systemd-run --unit="$2" --collect --quiet /bin/sh "'"$JOB"'/$2.sh" && echo "→ 后台跑着：ws log ${2#ws-}"'
+  S='mkdir -p '"$JOB"' && echo "$1" | base64 -d > "'"$JOB"'/$2.sh" && systemd-run --unit="$2" --collect --quiet /bin/sh -c "sh '"$JOB"'/$2.sh | cat" && echo "→ 后台跑着：ws log ${2#ws-}"'
   "$DS" --name="$NAME" run sh -c "$S" ws "$B" "$U"
 }
 
