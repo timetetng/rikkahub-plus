@@ -120,8 +120,22 @@ private val parser by lazy { MarkdownParser(flavour) }
 private fun generateMarkdownHtml(content: String): String {
     val preprocessed = preProcess(content)
     val tree = parser.buildMarkdownTreeFromString(preprocessed)
-    return HtmlGenerator(preprocessed, tree, flavour).generateHtml()
+    return escapeMathHtml(HtmlGenerator(preprocessed, tree, flavour).generateHtml())
 }
+
+// 公式源码是直接拼进 HTML 的，里面的 < 会被 Jsoup 当成标签开头（0<x<1 就从此截断、只剩源码）。
+// 在 Jsoup 解析前把 math span 里的裸 < > 转义。
+private val MATH_SPAN_HTML_REGEX =
+    Regex("""<span[^>]*class="[^"]*\bmath\b[^"]*"[^>]*>([\s\S]*?)</span>""")
+
+private fun escapeMathHtml(html: String): String =
+    MATH_SPAN_HTML_REGEX.replace(html) { m ->
+        val body = m.groupValues[1]
+        if (body.isEmpty()) return@replace m.value
+        val openEnd = m.value.indexOf('>')
+        val open = m.value.substring(0, openEnd + 1)
+        open + body.replace("<", "&lt;").replace(">", "&gt;") + "</span>"
+    }
 
 // ---- Main composable ----
 

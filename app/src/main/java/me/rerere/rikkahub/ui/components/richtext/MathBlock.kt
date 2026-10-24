@@ -46,10 +46,13 @@ fun MathBlock(
             fontSize = fontSize.takeOrElse { LocalTextStyle.current.fontSize },
             modifier = Modifier
                 .align(Alignment.Center)
+                // 长按复制放在外层、横向滚动放内层：手势按 Main pass 由内向外派发，
+                // 里面的滚动先拿到按压事件；detectTapGestures 会消费 down，
+                // 反过来放就会抢掉横向拖动，导致超宽公式滑不动。
+                .then(latexCopyModifier(LocalContext.current, latexCopySource(proceededLatex, display = true)))
                 .horizontalScroll(
                     rememberScrollState()
-                )
-                .then(latexCopyModifier(LocalContext.current, latexCopySource(proceededLatex, display = true))),
+                ),
         )
     }
 }
