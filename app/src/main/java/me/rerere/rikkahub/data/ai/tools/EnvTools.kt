@@ -258,8 +258,8 @@ private fun trimOutput(s: String): String {
  * 输出太大时把完整内容从临时文件复制到 spill 目录 —— 进程一退，temp 文件就删了。
  * 抄 pi-mono bash 的 capture.spill：截断不能等于「信息消失」。
  */
-private fun spillIfNeeded(f: File, tag: String): String? {
-    if (!f.exists() || f.length() <= MAX_FILE_READ) return null
+private fun spillIfNeeded(f: File, tag: String, threshold: Int = MAX_FILE_READ): String? {
+    if (!f.exists() || f.length() <= threshold) return null
     return runCatching {
         val dir = File(SPILL_DIR).apply { mkdirs() }
         val cutoff = System.currentTimeMillis() - 24L * 3600 * 1000
@@ -331,7 +331,12 @@ private fun readFileCapped(f: File, maxBytes: Int = MAX_FILE_READ): String {
  *      （stopGeneration 里的 job.join() 因此永远等不到）—— 这就是「点 X 没反应」的根因。
  *   2. **超时不必杀**：把还在跑的进程句柄交回去，可以降级成后台任务继续跑。
  */
-private suspend fun runProcess(argv: Array<String>, stdin: String?, timeoutSec: Long): ExecOutcome {
+private suspend fun runProcess(
+    argv: Array<String>,
+    stdin: String?,
+    timeoutSec: Long,
+    maxOutputBytes: Int = MAX_FILE_READ,
+): ExecOutcome {
     val outFile = File.createTempFile("rh-exec-", ".out")
     val errFile = File.createTempFile("rh-exec-", ".err")
     val inFile = if (stdin != null) {
@@ -362,10 +367,10 @@ private suspend fun runProcess(argv: Array<String>, stdin: String?, timeoutSec: 
             delay(EXEC_POLL_MS)
         }
         val code = runCatching { process.exitValue() }.getOrDefault(-1)
-        val outSpill = spillIfNeeded(outFile, "stdout")
-        val errSpill = spillIfNeeded(errFile, "stderr")
-        val out = readFileCapped(outFile) + (outSpill?.let { "\n[output truncated; full log: $it]" } ?: "")
-        val err = readFileCapped(errFile) + (errSpill?.let { "\n[output truncated; full log: $it]" } ?: "")
+        val outSpill = spillIfNeeded(outFile, "stdout", maxOutputBytes)
+        val errSpill = spillIfNeeded(errFile, "stderr", maxOutputBytes)
+        val out = readFileCapped(outFile, maxOutputBytes) + (outSpill?.let { "\n[output truncated; full log: $it]" } ?: "")
+        val err = readFileCapped(errFile, maxOutputBytes) + (errSpill?.let { "\n[output truncated; full log: $it]" } ?: "")
         cleanupFiles(outFile, errFile, inFile)
         return ExecOutcome.Done(ExecResult(code, out, err))
     } catch (e: CancellationException) {
@@ -380,7 +385,7 @@ private suspend fun runProcess(argv: Array<String>, stdin: String?, timeoutSec: 
  * 在远程主机（ssh:<alias>）执行脚本：走容器 arch 里的 ssh 客户端（config 与密钥都在容器 ~/.ssh），
  * 脚本经 heredoc 喂给远程 `bash -s`，零转义；别名只写 Host 名，不需要 user@host -p port。
  */
-private suspend fun runInSsh(t: Target, script: String, timeoutSec: Long): ExecResult {
+private suspend fun runInSsh(t: Target, script: String, timeoutSec: Long, maxOutputBytes: Int = MAX_FILE_READ): ExecResult {
     val alias = t.container
     require(!alias.startsWith("-")) { "env: ssh alias must not start with '-'" }
     var delim = "__ENV_SSH_EOF__"
@@ -393,12 +398,18 @@ private suspend fun runInSsh(t: Target, script: String, timeoutSec: Long): ExecR
         append(body)
         append(delim).append("\n")
     }
-    return runProcess(arrayOf("su", "-c", "$EXEC_TOOL arch"), wrapped, timeoutSec).expectDone()
+    return runProcess(arrayOf("su", "-c", "$EXEC_TOOL arch"), wrapped, timeoutSec, maxOutputBytes).expectDone()
 }
 
 /** 在目标环境里执行脚本 */
-private suspend fun runInTarget(t: Target, script: String, timeoutSec: Long): ExecResult =
-    if (t.isSsh) runInSsh(t, script, timeoutSec) else runProcess(argvFor(t), script, timeoutSec).expectDone()
+private suspend fun runInTarget(
+    t: Target,
+    script: String,
+    timeoutSec: Long,
+    maxOutputBytes: Int = MAX_FILE_READ,
+): ExecResult =
+    if (t.isSsh) runInSsh(t, script, timeoutSec, maxOutputBytes)
+    else runProcess(argvFor(t), script, timeoutSec, maxOutputBytes).expectDone()
 
 /** 在宿主侧直接跑（ws 等辅助脚本） */
 private suspend fun runHostScript(shellCommand: String, stdin: String?, timeoutSec: Long): ExecResult =
@@ -455,6 +466,31 @@ fun createEnvTools(
             error("env_read_file: decode failed (${e.message})")
         }
         return size to text
+    }
+
+    /** 读目标里的图片字节（base64 回传；上限单列，不受文本 2MB 限制） */
+    suspend fun readImageRaw(t: Target, pathArg: String, timeoutSec: Long): ByteArray {
+        val (path, _) = mapPath(t, pathArg)
+        val maxMb = MAX_IMAGE_READ_BYTES / 1024 / 1024
+        val script = buildString {
+            append("p=").append(shq(path)).append("\n")
+            append("[ -e \"\$p\" ] || { echo \"env_read_file: no such file or directory\" >&2; exit 3; }\n")
+            append("[ -f \"\$p\" ] || { echo \"env_read_file: not a regular file\" >&2; exit 4; }\n")
+            append("sz=\$(wc -c < \"\$p\" 2>/dev/null); sz=\${sz:-0}\n")
+            append("if [ \"\$sz\" -gt $MAX_IMAGE_READ_BYTES ]; then echo \"env_read_file: image is \$sz bytes (> ${maxMb}MB)\" >&2; exit 7; fi\n")
+            append("echo \"${META_PREFIX}size=\$sz\"\n")
+            append("base64 < \"\$p\"\n")
+        }
+        // base64 膨胀 4/3；输出上限放宽，否则 >512KB 的图会被截断成乱码
+        val maxOut = (MAX_IMAGE_READ_BYTES * 4 / 3 + 64 * 1024).toInt()
+        val res = runInTarget(t, script, timeoutSec, maxOut)
+        if (res.exitCode != 0) failWith(res.stderr, res.exitCode, "env_read_file failed")
+        val (_, b64text) = metaLine(res)
+        return try {
+            Base64.decode(b64text.replace(Regex("\\s"), ""), Base64.DEFAULT)
+        } catch (e: Exception) {
+            error("env_read_file: image decode failed (${e.message})")
+        }
     }
 
     /** 小文件：一条命令写完 */
@@ -707,8 +743,9 @@ fun createEnvTools(
     val readTool = Tool(
         name = "env_read_file",
         description = """
-            Read a UTF-8 text file in a device environment. `path` is written in HOST view and auto-mapped for containers.
-            offset/limit = line range (default 1 / 200). Files > 2MB need a slice. Returns size + text.
+            Read a file in a device environment. `path` is written in HOST view and auto-mapped for containers.
+            Text files: offset/limit = line range (default 1 / 200). Files > 2MB need a slice.
+            Images (png/jpg/jpeg/gif/webp/bmp/heic/heif/avif, <= ${MAX_IMAGE_READ_BYTES / 1024 / 1024}MB): returns the image itself so it can be inspected directly.
         """.trimIndent().replace("\n", " "),
         needsApproval = { false },
         parameters = {
@@ -749,30 +786,48 @@ fun createEnvTools(
             val sliced = offset != null || limit != null
             val (path, mappedNote) = mapPath(t, pathArg)
 
-            val script = buildString {
-                append("p=").append(shq(path)).append("\n")
-                append("[ -e \"\$p\" ] || { echo \"env_read_file: no such file or directory\" >&2; exit 3; }\n")
-                append("[ -f \"\$p\" ] || { echo \"env_read_file: not a regular file\" >&2; exit 4; }\n")
-                append("sz=\$(wc -c < \"\$p\" 2>/dev/null); sz=\${sz:-0}\n")
-                if (!sliced) {
-                    append("if [ \"\$sz\" -gt $MAX_READ_BYTES ]; then echo \"env_read_file: file is \$sz bytes (> 2MB); pass offset/limit to read a slice\" >&2; exit 7; fi\n")
+            val imageBytes = if (pathArg.looksLikeImagePath()) {
+                readImageRaw(t, pathArg, defTimeout)
+            } else null
+            val imageMime = imageBytes?.let { sniffImageMime(it) }
+
+            if (imageMime != null && imageBytes != null) {
+                val image = saveImageAsChatPart(imageBytes, imageMime, pathArg)
+                val payload = buildJsonObject {
+                    put("target", t.label)
+                    put("path", path)
+                    if (mappedNote != null) put("path_mapped", mappedNote)
+                    put("size", JsonPrimitive(imageBytes.size))
+                    put("mime", JsonPrimitive(imageMime))
+                    put("image", JsonPrimitive(true))
                 }
-                append("echo \"${META_PREFIX}size=\$sz\"\n")
-                append("sed -n '").append(start).append(",").append(end).append("p' \"\$p\"\n")
+                listOf(image, UIMessagePart.Text(payload.toString()))
+            } else {
+                val script = buildString {
+                    append("p=").append(shq(path)).append("\n")
+                    append("[ -e \"\$p\" ] || { echo \"env_read_file: no such file or directory\" >&2; exit 3; }\n")
+                    append("[ -f \"\$p\" ] || { echo \"env_read_file: not a regular file\" >&2; exit 4; }\n")
+                    append("sz=\$(wc -c < \"\$p\" 2>/dev/null); sz=\${sz:-0}\n")
+                    if (!sliced) {
+                        append("if [ \"\$sz\" -gt $MAX_READ_BYTES ]; then echo \"env_read_file: file is \$sz bytes (> 2MB); pass offset/limit to read a slice\" >&2; exit 7; fi\n")
+                    }
+                    append("echo \"${META_PREFIX}size=\$sz\"\n")
+                    append("sed -n '").append(start).append(",").append(end).append("p' \"\$p\"\n")
+                }
+                val res = runInTarget(t, script, defTimeout)
+                if (res.exitCode != 0) failWith(res.stderr, res.exitCode, "env_read_file failed")
+                val (size, text) = metaLine(res)
+                val payload = buildJsonObject {
+                    put("target", t.label)
+                    put("path", path)
+                    if (mappedNote != null) put("path_mapped", mappedNote)
+                    put("size", JsonPrimitive(size))
+                    put("offset", JsonPrimitive(start))
+                    put("limit", JsonPrimitive(count))
+                    put("text", JsonPrimitive(text))
+                }
+                listOf(UIMessagePart.Text(payload.toString()))
             }
-            val res = runInTarget(t, script, defTimeout)
-            if (res.exitCode != 0) failWith(res.stderr, res.exitCode, "env_read_file failed")
-            val (size, text) = metaLine(res)
-            val payload = buildJsonObject {
-                put("target", t.label)
-                put("path", path)
-                if (mappedNote != null) put("path_mapped", mappedNote)
-                put("size", JsonPrimitive(size))
-                put("offset", JsonPrimitive(start))
-                put("limit", JsonPrimitive(count))
-                put("text", JsonPrimitive(text))
-            }
-            listOf(UIMessagePart.Text(payload.toString()))
         },
     )
 

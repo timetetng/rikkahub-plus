@@ -66,6 +66,7 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                 appendLine()
                 appendLine("When to use:")
                 appendLine("- Read file contents with optional offset/limit pagination")
+                appendLine("- Reading an image file (png/jpg/jpeg/gif/webp/bmp/heic/heif/avif) returns the image itself, not bytes")
                 appendLine("- Write or overwrite files with text content")
                 appendLine("- Patch files using surgical find-and-replace (old_string → new_string)")
                 appendLine("- List directory contents with file sizes")
@@ -209,9 +210,24 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                             }?.joinToString("\n") ?: "(empty)"
                             listOf(UIMessagePart.Text("[${file.absolutePath}] 目录内容:\n$listing"))
                         } else {
-                            val offset = obj["offset"]?.jsonPrimitive?.intOrNull ?: 1
-                            val limit = obj["limit"]?.jsonPrimitive?.intOrNull ?: READ_MAX_LINES
-                            listOf(UIMessagePart.Text(readFileWindow(file, offset, limit)))
+                            val imageMime = sniffImageMime(file)
+                            if (imageMime != null) {
+                                if (file.length() > MAX_IMAGE_READ_BYTES) {
+                                    error(
+                                        "Image is ${formatSize(file.length())} (> ${formatSize(MAX_IMAGE_READ_BYTES)}), too large to read. " +
+                                            "Downscale it first (e.g. image-desk imgdo.py resize 1568)."
+                                    )
+                                }
+                                val image = saveImageAsChatPart(file.readBytes(), imageMime, file.name)
+                                listOf(
+                                    image,
+                                    imageReadMeta(file.absolutePath, file.length(), imageMime),
+                                )
+                            } else {
+                                val offset = obj["offset"]?.jsonPrimitive?.intOrNull ?: 1
+                                val limit = obj["limit"]?.jsonPrimitive?.intOrNull ?: READ_MAX_LINES
+                                listOf(UIMessagePart.Text(readFileWindow(file, offset, limit)))
+                            }
                         }
                     }
                     "write" -> {

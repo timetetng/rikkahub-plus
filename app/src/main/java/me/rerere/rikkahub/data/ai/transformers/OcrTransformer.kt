@@ -52,26 +52,38 @@ object OcrTransformer : InputMessageTransformer, KoinComponent {
             return messages
         }
 
-        val hasImages = messages.any { message ->
-            message.parts.any { it is UIMessagePart.Image && it.url.startsWith("file:") }
-        }
+        val hasImages = messages.any { it.hasLocalImage() }
         if (!hasImages) return messages
 
         return withContext(Dispatchers.IO) {
             try {
                 ctx.processingStatus.value = "正在识别图片..."
                 messages.map { message ->
-                    message.copy(
-                        parts = message.parts.map { part ->
-                            when {
-                                part is UIMessagePart.Image && part.url.startsWith("file:") -> {
-                                    UIMessagePart.Text(performOcr(part))
-                                }
+                    if (!message.hasLocalImage()) {
+                        message
+                    } else {
+                        message.copy(
+                            parts = message.parts.map { part ->
+                                when {
+                                    part.isLocalImage() -> {
+                                        UIMessagePart.Text(performOcr(part as UIMessagePart.Image))
+                                    }
 
-                                else -> part
+                                    part is UIMessagePart.Tool && part.hasLocalImage() -> {
+                                        part.copy(
+                                            output = part.output.map { item ->
+                                                if (item.isLocalImage()) {
+                                                    UIMessagePart.Text(performOcr(item as UIMessagePart.Image))
+                                                } else item
+                                            }
+                                        )
+                                    }
+
+                                    else -> part
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             } finally {
                 ctx.processingStatus.value = null
@@ -111,7 +123,7 @@ object OcrTransformer : InputMessageTransformer, KoinComponent {
             <image_file_ocr>
                $content
             </image_file_ocr>
-            * The image_file_ocr tag contains a description of an image that the user uploaded to you, not the user's prompt.
+            * The image_file_ocr tag contains a description of an image from the conversation, not the user's prompt.
         """.trimIndent()
 
         // Cache the result
@@ -121,3 +133,15 @@ object OcrTransformer : InputMessageTransformer, KoinComponent {
         "[ERROR, OCR failed: $it]"
     }
 }
+
+/** 本地聊天附件（file://）；工具读图也走这个路径。 */
+private fun UIMessagePart.isLocalImage(): Boolean =
+    this is UIMessagePart.Image && url.startsWith("file:")
+
+private fun UIMessagePart.Tool.hasLocalImage(): Boolean =
+    output.any { it.isLocalImage() }
+
+private fun UIMessage.hasLocalImage(): Boolean =
+    parts.any { part ->
+        part.isLocalImage() || (part is UIMessagePart.Tool && part.hasLocalImage())
+    }
