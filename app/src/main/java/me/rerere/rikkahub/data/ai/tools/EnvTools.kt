@@ -450,8 +450,8 @@ fun createEnvTools(
         val (path, _) = mapPath(t, pathArg)
         val script = buildString {
             append("p=").append(shq(path)).append("\n")
-            append("[ -e \"\$p\" ] || { echo \"env_read_file: no such file or directory\" >&2; exit 3; }\n")
-            append("[ -f \"\$p\" ] || { echo \"env_read_file: not a regular file\" >&2; exit 4; }\n")
+            append("if [ ! -e \"\$p\" ]; then echo \"env_read_file: no such file or directory: \$p\" >&2; ls -ld -- \"\$(dirname \"\$p\")\" >&2 2>/dev/null; ls -l -- \"\$p\" >&2 2>/dev/null; exit 3; fi\n")
+            append("[ -f \"\$p\" ] || { echo \"env_read_file: not a regular file: \$p\" >&2; exit 4; }\n")
             append("sz=\$(wc -c < \"\$p\" 2>/dev/null); sz=\${sz:-0}\n")
             append("if [ \"\$sz\" -gt $MAX_READ_BYTES ]; then echo \"env_read_file: file is \$sz bytes (> 2MB)\" >&2; exit 7; fi\n")
             append("echo \"${META_PREFIX}size=\$sz\"\n")
@@ -474,8 +474,8 @@ fun createEnvTools(
         val maxMb = MAX_IMAGE_READ_BYTES / 1024 / 1024
         val script = buildString {
             append("p=").append(shq(path)).append("\n")
-            append("[ -e \"\$p\" ] || { echo \"env_read_file: no such file or directory\" >&2; exit 3; }\n")
-            append("[ -f \"\$p\" ] || { echo \"env_read_file: not a regular file\" >&2; exit 4; }\n")
+            append("if [ ! -e \"\$p\" ]; then echo \"env_read_file: no such file or directory: \$p\" >&2; ls -ld -- \"\$(dirname \"\$p\")\" >&2 2>/dev/null; ls -l -- \"\$p\" >&2 2>/dev/null; exit 3; fi\n")
+            append("[ -f \"\$p\" ] || { echo \"env_read_file: not a regular file: \$p\" >&2; exit 4; }\n")
             append("sz=\$(wc -c < \"\$p\" 2>/dev/null); sz=\${sz:-0}\n")
             append("if [ \"\$sz\" -gt $MAX_IMAGE_READ_BYTES ]; then echo \"env_read_file: image is \$sz bytes (> ${maxMb}MB)\" >&2; exit 7; fi\n")
             append("echo \"${META_PREFIX}size=\$sz\"\n")
@@ -623,7 +623,8 @@ fun createEnvTools(
         description = """
             Run a shell command in a device environment (NOT the app sandbox). Multi-line scripts are fine; quotes are
             passed verbatim. Long tasks (pacman/docker/builds) must use env_bg + env_log. Returns exit_code,
-            stdout, stderr.
+            stdout, stderr. Calls issued in the same assistant turn do not run in order: to write a file and then
+            read it, do the read in a later turn or use the codemode tool (a synchronous script).
         """.trimIndent().replace("\n", " "),
         needsApproval = { false },
         parameters = {
@@ -746,6 +747,8 @@ fun createEnvTools(
             Read a file in a device environment. `path` is written in HOST view and auto-mapped for containers.
             Text files: offset/limit = line range (default 1 / 200). Files > 2MB need a slice.
             Images (png/jpg/jpeg/gif/webp/bmp/heic/heif/avif, <= ${MAX_IMAGE_READ_BYTES / 1024 / 1024}MB): returns the image itself so it can be inspected directly.
+            Calls issued in the same assistant turn do not run in order: a file written by another call in the same
+            turn may not exist yet. Read in a later turn, or use the codemode tool to write-then-read in one script.
         """.trimIndent().replace("\n", " "),
         needsApproval = { false },
         parameters = {
@@ -805,8 +808,8 @@ fun createEnvTools(
             } else {
                 val script = buildString {
                     append("p=").append(shq(path)).append("\n")
-                    append("[ -e \"\$p\" ] || { echo \"env_read_file: no such file or directory\" >&2; exit 3; }\n")
-                    append("[ -f \"\$p\" ] || { echo \"env_read_file: not a regular file\" >&2; exit 4; }\n")
+                    append("if [ ! -e \"\$p\" ]; then echo \"env_read_file: no such file or directory: \$p\" >&2; ls -ld -- \"\$(dirname \"\$p\")\" >&2 2>/dev/null; ls -l -- \"\$p\" >&2 2>/dev/null; exit 3; fi\n")
+                    append("[ -f \"\$p\" ] || { echo \"env_read_file: not a regular file: \$p\" >&2; exit 4; }\n")
                     append("sz=\$(wc -c < \"\$p\" 2>/dev/null); sz=\${sz:-0}\n")
                     if (!sliced) {
                         append("if [ \"\$sz\" -gt $MAX_READ_BYTES ]; then echo \"env_read_file: file is \$sz bytes (> 2MB); pass offset/limit to read a slice\" >&2; exit 7; fi\n")
@@ -836,6 +839,8 @@ fun createEnvTools(
         description = """
             Write (create or overwrite) a UTF-8 text file in a device environment. Content needs no escaping (base64
             pipe), parent dirs are created. `path` is HOST view, auto-mapped. Max 2MB per call.
+            Calls issued in the same assistant turn do not run in order: reading the file in another call of the same
+            turn is racy. Use the codemode tool if the write and the read must be ordered.
         """.trimIndent().replace("\n", " "),
         needsApproval = { false },
         parameters = {

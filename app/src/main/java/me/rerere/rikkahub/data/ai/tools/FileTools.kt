@@ -88,6 +88,8 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                 appendLine("- mode/pattern/root: Search parameters (search)")
                 appendLine("- file_pattern/use_regex/context: Advanced search options")
                 appendLine()
+                appendLine("Same-turn ordering: tool calls issued in one assistant turn run concurrently with no ordering. A read issued alongside a write may see the old file or miss it — read in a later turn, or use the codemode tool to order them in one script.")
+                appendLine()
                 appendLine("Absolute paths work as-is. Relative paths resolve to ${defaultDir}.")
             },
             parameters = {

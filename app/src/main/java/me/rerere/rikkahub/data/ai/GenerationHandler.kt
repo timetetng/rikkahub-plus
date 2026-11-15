@@ -111,6 +111,7 @@ class GenerationHandler(
         name.startsWith("text_to_speech") -> "🔧 语音 → 正在朗读..."
         name.startsWith("present_file") -> "🔧 文件 → 正在分享..."
         name.startsWith("eval_javascript") -> "🔧 JS → 正在执行..."
+        name == "codemode" -> "🔧 脚本 → 正在按序调用工具..."
         name.startsWith("memory_") -> "🔧 记忆 → 正在处理..."
         name.startsWith("env_") -> "🔧 环境 → 正在执行..."
             else -> "🔧 $name → 正在处理..."

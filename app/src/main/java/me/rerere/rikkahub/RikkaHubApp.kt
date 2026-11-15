@@ -90,6 +90,9 @@ class RikkaHubApp : Application() {
         QuickJSLoader.init()
         trace("quickjs done")
 
+        // codemode 同步桥自检（外部 files 目录有 trigger 文件时跑一次）
+        runCatching { me.rerere.rikkahub.data.ai.tools.CodemodeSelfTest.maybeRun(this) }
+
         // delete temp files
         deleteTempFiles()
         trace("tempfiles done")

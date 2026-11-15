@@ -81,6 +81,7 @@ import me.rerere.rikkahub.data.ai.tools.createShellTools
 import me.rerere.rikkahub.data.ai.tools.createPythonTool
 import me.rerere.rikkahub.data.ai.tools.createDatabaseQueryTool
 import me.rerere.rikkahub.data.ai.tools.createCalculatorTool
+import me.rerere.rikkahub.data.ai.tools.createCodemodeTool
 import me.rerere.rikkahub.data.ai.tools.createEnvTools
 import me.rerere.rikkahub.data.ai.tools.createWebFetchTool
 import me.rerere.rikkahub.data.ai.tools.createTaskTools
@@ -1379,6 +1380,10 @@ class ChatService(
                             )
                         )
                     }
+                }.let { built ->
+                    if (assistant.localTools.contains(LocalToolOption.Codemode)) {
+                        built + createCodemodeTool({ built }, assistant.toolExecTimeout.toLong())
+                    } else built
                 },
             ).onCompletion {
                 // 取消前台服务；通知由 ChatNotificationManager 通过 AppEventBus 消费
@@ -1750,6 +1755,10 @@ class ChatService(
                         )
                     )
                 }
+            }.let { built ->
+                if (assistant.localTools.contains(LocalToolOption.Codemode)) {
+                    built + createCodemodeTool({ built }, assistant.toolExecTimeout.toLong())
+                } else built
             },
             inputTransformers = buildList {
                 addAll(inputTransformers)

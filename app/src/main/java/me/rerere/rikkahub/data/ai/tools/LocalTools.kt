@@ -56,6 +56,10 @@ sealed class LocalToolOption {
     data object JavascriptEngine : LocalToolOption()
 
     @Serializable
+    @SerialName("codemode")
+    data object Codemode : LocalToolOption()
+
+    @Serializable
     @SerialName("time_info")
     data object TimeInfo : LocalToolOption()
 

@@ -255,6 +255,18 @@ private fun AssistantLocalToolContent(
                 }
             )
             item(
+                headlineContent = { Text("Codemode 脚本") },
+                supportingContent = {
+                    Text("AI 写一段同步 JS 按顺序调用其他工具：写完立刻读、批量并发、只回脚本输出")
+                },
+                trailingContent = {
+                    Switch(
+                        checked = assistant.localTools.contains(LocalToolOption.Codemode),
+                        onCheckedChange = { toggleLocalTool(LocalToolOption.Codemode, it) }
+                    )
+                }
+            )
+            item(
                 headlineContent = {
                     Text(stringResource(R.string.assistant_page_local_tools_time_info_title))
                 },
