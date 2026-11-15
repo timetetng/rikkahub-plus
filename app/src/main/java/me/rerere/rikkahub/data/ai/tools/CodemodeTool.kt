@@ -203,7 +203,7 @@ private suspend fun runScript(
     )
 
     try {
-        val raw = future.get(timeoutMs + 2_000, TimeUnit.MILLISECONDS)
+        val raw = future.get(timeoutMs + 800, TimeUnit.MILLISECONDS)
         executor.shutdown()
         toOutcome(raw)
     } catch (e: TimeoutException) {
@@ -373,7 +373,11 @@ private fun runInFreshContext(
             // 包成普通函数体的 IIFE：顶层 return 可用，var/const 不泄漏到下一次调用
             ctx.evaluate("__ret = (function(){\n" + code + "\n})();")
         } catch (e: Throwable) {
-            scriptError = e.message ?: e.toString()
+            val msg = (e.message ?: "").trim()
+            scriptError = if (msg.isEmpty() || msg == "null") {
+                // QuickJS 的 OOM / 中断有时不带 message
+                "script aborted with no message (out of memory? limit is ${MEMORY_LIMIT_BYTES / 1024 / 1024}MB)"
+            } else msg
         }
 
         val stateJson = runCatching {
