@@ -43,8 +43,9 @@ private const val CODEMODE_DESCRIPTION =
         "NO `await` and no Promise. Write calls as plain statements — each blocks until the tool finishes, so the next " +
         "line already sees its effect (write-then-read is safe).\n\n" +
         "Globals:\n" +
-        "- `tools.<name>(args)` — call a tool and return `{ ok, text, images: [{ id, mime }], documents: [...] }`. " +
-        "It throws an Error when the tool fails; use try/catch to retry.\n" +
+        "- `tools.<name>(args)` — call a tool and return `{ ok, text, data, images: [{ id, mime }], documents }`; " +
+        "`data` is the parsed JSON object when the tool's output is a single JSON payload (env_*/file tools), so " +
+        "`r.data.stdout` works. It throws an Error when the tool fails; use try/catch to retry.\n" +
         "- `toolsAll([{ name, args }, ...])` — run several calls in parallel; returns an array of the same result " +
         "objects, failures included as `{ ok: false, error }`.\n" +
         "- `text(value)` / `console.log(...)` — add output; top-level `return` also adds a value.\n" +
@@ -273,7 +274,9 @@ private fun runInFreshContext(
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
             toolError("tool '$name' timed out")
         } catch (e: Exception) {
-            toolError("$name: ${e.message ?: e.toString()}")
+            val msg = e.message ?: e.toString()
+            // 工具自己已经带了前缀就不再重复
+            toolError(if (msg.startsWith("$name:")) msg else "$name: $msg")
         }
     }
 
@@ -433,7 +436,11 @@ private fun toOutcome(raw: RawRun): ScriptOutcome {
         images = raw.images,
         shownImages = shown,
         hiddenImageCount = (raw.images.size - shown.size).coerceAtLeast(0),
-        error = raw.scriptError,
+        error = raw.scriptError?.let { err ->
+            if (err.contains("await", ignoreCase = true) || err.contains("Promise", ignoreCase = true)) {
+                err + "\nHint: this engine is synchronous — remove await/Promise and write plain statements (use toolsAll for parallel calls)."
+            } else err
+        },
         elapsedMs = raw.elapsedMs,
     )
 }
@@ -479,9 +486,17 @@ private fun partsToJson(parts: List<UIMessagePart>, images: MutableList<UIMessag
             }
         }
     }
+    val fullText = textBuf.toString()
+    // 大部分工具的输出就是一段 JSON（env_*、file 等）：顺手解析成 data，脚本里可以直接 r.data.xxx
+    val data = runCatching {
+        if (parts.count { it is UIMessagePart.Text } == 1) {
+            kotlinx.serialization.json.Json.parseToJsonElement(fullText).jsonObject
+        } else null
+    }.getOrNull()
     return buildJsonObject {
         put("ok", true)
-        put("text", truncate(textBuf.toString(), MAX_TOOL_TEXT_CHARS))
+        put("text", truncate(fullText, MAX_TOOL_TEXT_CHARS))
+        put("data", data ?: JsonNull)
         put("images", JsonArray(imageRefs))
         put("documents", JsonArray(docs))
     }
