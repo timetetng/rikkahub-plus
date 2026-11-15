@@ -8,6 +8,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -36,6 +38,8 @@ private const val MAX_OUTPUT_CHARS = 32 * 1024
 private const val MAX_TOOL_TEXT_CHARS = 512 * 1024
 private const val MEMORY_LIMIT_BYTES = 128 * 1024 * 1024
 private const val MAX_IMAGES = 8
+/** toolsAll 里同时跑的工具数上限。 */
+private const val MAX_PARALLEL_CALLS = 4
 
 private const val CODEMODE_DESCRIPTION =
     "Run a JavaScript script that calls other tools in order; only the script's output is returned to you.\n\n" +
@@ -46,8 +50,8 @@ private const val CODEMODE_DESCRIPTION =
         "- `tools.<name>(args)` — call a tool and return `{ ok, text, data, images: [{ id, mime }], documents }`; " +
         "`data` is the parsed JSON object when the tool's output is a single JSON payload (env_*/file tools), so " +
         "`r.data.stdout` works. It throws an Error when the tool fails; use try/catch to retry.\n" +
-        "- `toolsAll([{ name, args }, ...])` — run several calls in parallel; returns an array of the same result " +
-        "objects, failures included as `{ ok: false, error }`.\n" +
+        "- `toolsAll([{ name, args }, ...])` — run several calls in parallel (at most 4 at a time); returns an array " +
+        "of the same result objects, failures included as `{ ok: false, error }`.\n" +
         "- `text(value)` / `console.log(...)` — add output; top-level `return` also adds a value.\n" +
         "- `image(res.images[0])` — show an image in the output. Images from tool results are NOT sent unless you do this.\n" +
         "- `ALL_TOOLS` — every callable tool as `{ name, description }`.\n" +
@@ -303,6 +307,7 @@ private fun runInFreshContext(
                 val calls = runCatching { json.parseToJsonElement(listJson).jsonArray }.getOrElse {
                     return@runBlocking "[" + toolError("toolsAll expects an array of { name, args }") + "]"
                 }
+                val gate = Semaphore(MAX_PARALLEL_CALLS)
                 coroutineScope {
                     calls.map { el ->
                         async(Dispatchers.IO) {
@@ -311,7 +316,7 @@ private fun runInFreshContext(
                             val name = o["name"]?.jsonPrimitive?.contentOrNull
                                 ?: return@async toolError("toolsAll entry needs name")
                             val a = o["args"]?.toString() ?: "null"
-                            runTool(name, a)
+                            gate.withPermit { runTool(name, a) }
                         }
                     }.awaitAll()
                 }.joinToString(",", "[", "]")

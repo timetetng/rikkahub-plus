@@ -1213,8 +1213,43 @@ fun createEnvTools(
         },
     )
 
-    return listOf(execTool, readTool, writeTool, editTool, listTool, bgTool, logTool)
+    // 并发闸门：同轮并行调用不知道彼此依赖，按 target / path 串行化会冲突的部分。
+    // 文件类（read/write/edit/list）按 (target, path) 互斥并共享 target 车道；exec/bg 独占 target。
+    return listOf(
+        guardConcurrency(execTool, cfgTarget, pathScoped = false),
+        guardConcurrency(readTool, cfgTarget, pathScoped = true),
+        guardConcurrency(writeTool, cfgTarget, pathScoped = true),
+        guardConcurrency(editTool, cfgTarget, pathScoped = true),
+        guardConcurrency(listTool, cfgTarget, pathScoped = true),
+        guardConcurrency(bgTool, cfgTarget, pathScoped = false),
+        logTool, // 只读日志，不参与
+    )
 }
+
+/**
+ * 给 env 工具套一层并发闸门。
+ *
+ * - pathScoped = true：按 (target, path) 互斥；同时拿 target 的共享许可（独占的 env_exec 会等它）。
+ * - pathScoped = false：拿 target 独占许可（任意 shell 命令都可能改任何路径，保守处理）。
+ */
+private fun guardConcurrency(tool: Tool, cfgTarget: String, pathScoped: Boolean): Tool = tool.copy(
+    execute = { args ->
+        val obj = args.jsonObject
+        val target = obj["target"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: cfgTarget
+        val path = obj["path"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        if (pathScoped && path != null) {
+            ToolLocks.withTargetShared(target) {
+                ToolLocks.withPath(target, path) {
+                    tool.execute(args)
+                }
+            }
+        } else {
+            ToolLocks.withTargetExclusive(target) {
+                tool.execute(args)
+            }
+        }
+    }
+)
 
 private fun countOccurrences(text: String, sub: String): Int {
     if (sub.isEmpty()) return 0
